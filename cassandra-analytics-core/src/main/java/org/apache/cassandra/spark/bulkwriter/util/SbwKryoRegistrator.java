@@ -28,10 +28,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.esotericsoftware.kryo.Kryo;
+import org.apache.cassandra.clients.SidecarInstanceSerializer;
+import org.apache.cassandra.sidecar.client.SidecarInstanceImpl;
 import org.apache.cassandra.spark.bulkwriter.CassandraBulkWriterContext;
 import org.apache.cassandra.spark.bulkwriter.RingInstance;
 import org.apache.cassandra.spark.bulkwriter.TokenPartitioner;
 import org.apache.cassandra.spark.bulkwriter.token.CassandraRing;
+import org.apache.cassandra.spark.transports.storage.StorageCredentialPair;
+import org.apache.cassandra.spark.transports.storage.StorageCredentials;
+import org.apache.cassandra.spark.transports.storage.extensions.StorageTransportConfiguration;
 import org.apache.spark.SparkConf;
 import org.apache.spark.serializer.KryoRegistrator;
 import org.jetbrains.annotations.NotNull;
@@ -42,11 +47,11 @@ public class SbwKryoRegistrator implements KryoRegistrator
     protected static final String KRYO_KEY = "spark.kryo.registrator";
 
     // CHECKSTYLE IGNORE: Despite being static and final, this is a mutable field not to be confused with a constant
-    private static final Set<Class<? extends Serializable>> javaSerializableClasses =
-            Sets.newHashSet(CassandraBulkWriterContext.class,
-                            CassandraRing.class,
-                            TokenPartitioner.class,
-                            RingInstance.class);
+    private static final Set<Class<? extends Serializable>> javaSerializableClasses = Sets.newHashSet(
+    CassandraBulkWriterContext.class,
+    CassandraRing.class,
+    TokenPartitioner.class,
+    RingInstance.class);
 
     @Override
     public void registerClasses(@NotNull Kryo kryo)
@@ -55,8 +60,12 @@ public class SbwKryoRegistrator implements KryoRegistrator
         // NOTE: The order of calls to `register` matters, so we sort by class name just to make sure we always
         //       register classess in the same order - HashSet doesn't guarantee its iteration order
         javaSerializableClasses.stream()
-                .sorted(Comparator.comparing(Class::getCanonicalName))
-                .forEach(javaSerializableClass -> kryo.register(javaSerializableClass, new SbwJavaSerializer()));
+                               .sorted(Comparator.comparing(Class::getCanonicalName))
+                               .forEach(javaSerializableClass -> kryo.register(javaSerializableClass, new SbwJavaSerializer()));
+        kryo.register(StorageTransportConfiguration.class, new StorageTransportConfiguration.Serializer());
+        kryo.register(StorageCredentialPair.class, new StorageCredentialPair.Serializer());
+        kryo.register(StorageCredentials.class, new StorageCredentials.Serializer());
+        kryo.register(SidecarInstanceImpl.class, new SidecarInstanceSerializer());
     }
 
     public static void addJavaSerializableClass(@NotNull Class<? extends Serializable> javaSerializableClass)

@@ -19,6 +19,7 @@
 
 package org.apache.cassandra.spark.bulkwriter;
 
+import java.io.Closeable;
 import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +30,7 @@ import org.apache.cassandra.spark.common.client.InstanceState;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
 import org.apache.cassandra.spark.validation.StartupValidatable;
 
-public interface ClusterInfo extends StartupValidatable, Serializable
+public interface ClusterInfo extends StartupValidatable, Serializable, Closeable
 {
     void refreshClusterInfo();
 
@@ -50,4 +51,10 @@ public interface ClusterInfo extends StartupValidatable, Serializable
     TimeSkewResponse getTimeSkew(List<RingInstance> replicas);
 
     String getKeyspaceSchema(boolean cached);
+
+    CassandraContext getCassandraContext();
+
+    default void close()
+    {
+    }
 }

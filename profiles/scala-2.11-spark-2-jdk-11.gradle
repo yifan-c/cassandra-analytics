@@ -19,12 +19,14 @@
 
 ext {
     jacksonVersion="2.10.0"
+    jacksonScalaModuleVersion="2.10.0"
     scalaMajorVersion="2.11"
     scalaVersion="2.11.12"
     sparkGroupId="org.apache.spark"
     sparkMajorVersion="2"
     sparkVersion="2.4.8.9-apple"  // Apple-internal version with back-ported changes to support execution on JDK11
-    sidecarClientGroup="org.apache.cassandra.sidecar"
-    sidecarClientName="vertx-client-all"
-    sidecarVersion="1.0.0.20-aci-cassandra"
+    sidecarClientGroup="com.apple.pie.db"
+    sidecarClientName="aci-cass-sidecar-client"
+    sidecarClientVersion="1.1.337"
+    sidecarIntTestVersion="1.0.0-analytics" // dependency built locally
 }

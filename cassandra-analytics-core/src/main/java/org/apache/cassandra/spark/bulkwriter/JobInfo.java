@@ -23,11 +23,13 @@ import java.io.Serializable;
 import java.util.UUID;
 
 import org.apache.cassandra.bridge.RowBufferMode;
+import org.apache.cassandra.sidecar.common.data.QualifiedTableName;
 import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
 import org.jetbrains.annotations.NotNull;
 
 public interface JobInfo extends Serializable
 {
+    // ******************
     // Job Information API - should this really just move back to Config? Here to try to reduce the violations of the Law of Demeter more than anything else
     ConsistencyLevel getConsistencyLevel();
 
@@ -44,14 +46,33 @@ public interface JobInfo extends Serializable
 
     int getCommitThreadsPerInstance();
 
-    UUID getId();
+    /**
+     * return the identifier of the restore job created on Cassandra Sidecar
+     * @return time-based uuid
+     */
+    UUID getRestoreJobId();
+
+    /**
+     * return optional unique identified supplied by customer
+     * @return a id string or null
+     */
+    String getConfiguredJobId();
+
+    // Convenient method to decide a unique identified used for the job.
+    // It prefers the configuredJobId if present; otherwise, fallback to the restoreJobId
+    default String getId()
+    {
+        String configuredJobId = getConfiguredJobId();
+        return configuredJobId == null ? getRestoreJobId().toString() : configuredJobId;
+    }
 
     TokenPartitioner getTokenPartitioner();
 
-    boolean validateSSTables();
-
     boolean skipExtendedVerify();
 
-    String getFullTableName();
+    QualifiedTableName getQualifiedTableName();
+
     boolean getSkipClean();
+
+    DataTransportInfo getTransportInfo();
 }

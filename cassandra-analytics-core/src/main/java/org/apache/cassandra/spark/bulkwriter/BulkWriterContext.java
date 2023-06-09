@@ -23,15 +23,17 @@ import java.io.Serializable;
 
 public interface BulkWriterContext extends Serializable
 {
+    BulkSparkConf conf();
+
     ClusterInfo cluster();
 
     JobInfo job();
 
     SchemaInfo schema();
 
-    DataTransferApi transfer();
-
     // NOTE: This interface intentionally does *not* implement AutoClosable as Spark can close Broadcast variables
     //       that implement AutoClosable while they are still in use, causing the underlying object to become unusable
     void shutdown();
+
+    TransportContext transportContext();
 }

@@ -1,0 +1,217 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.cassandra.spark.bulkwriter.blobupload;
+
+import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
+import com.apple.cassandra.data.CreateRestoreJobRequestPayload;
+import com.apple.cassandra.data.CreateRestoreJobResponsePayload;
+import com.apple.cassandra.data.CreateSliceRequestPayload;
+import com.apple.cassandra.data.RestoreJobSummaryResponsePayload;
+import com.apple.cassandra.data.UpdateRestoreJobRequestPayload;
+import com.apple.cassandra.sidecarclient.InternalSidecarClient;
+import com.apple.cassandra.sidecarclient.request.CreateRestoreJobSliceRequest;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import org.apache.cassandra.sidecar.client.HttpResponse;
+import org.apache.cassandra.sidecar.client.SidecarClient;
+import org.apache.cassandra.sidecar.client.SidecarInstance;
+import org.apache.cassandra.sidecar.client.request.Request;
+import org.apache.cassandra.sidecar.client.retry.RetryAction;
+import org.apache.cassandra.sidecar.client.retry.RetryPolicy;
+import org.apache.cassandra.sidecar.common.data.QualifiedTableName;
+import org.apache.cassandra.spark.bulkwriter.JobInfo;
+import org.apache.cassandra.spark.common.client.ClientException;
+import org.apache.cassandra.spark.transports.storage.StorageCredentials;
+
+/**
+ * Encapsulates transfer APIs used by {@link BlobStreamSession}. {@link StorageClient} is used to interact with S3 and
+ * upload SSTables bundles to S3 bucket. It also has {@link SidecarClient} to call relevant sidecar APIs.
+ */
+public class BlobDataTransferApi
+{
+    private final JobInfo jobInfo;
+    private final InternalSidecarClient sidecarClient;
+    private final StorageClient storageClient;
+
+    public BlobDataTransferApi(JobInfo jobInfo, SidecarClient sidecarClient, StorageClient storageClient)
+    {
+        this.jobInfo = jobInfo;
+
+        // check should be removed once we start using OSS client
+        if (!(sidecarClient instanceof InternalSidecarClient))
+        {
+            throw new IllegalArgumentException("Internal sidecar client needed for calling restore related sidecar APIs");
+        }
+        this.sidecarClient = (InternalSidecarClient) sidecarClient;
+        this.storageClient = storageClient;
+    }
+
+    /*------ Blob APIs -------*/
+
+    public BundleStorageObject uploadBundle(StorageCredentials writeCredentials, Bundle bundle)
+    throws ClientException
+    {
+        try
+        {
+            return storageClient.multiPartUpload(writeCredentials, bundle);
+        }
+        catch (IOException | ExecutionException | InterruptedException exception)
+        {
+            rethrowOnInterruptedException("Got interrupted when uploading bundles to S3", exception);
+            throw new ClientException("Failed to upload bundles to S3", exception);
+        }
+    }
+
+    /*------ Sidecar APIs -------*/
+
+    public CreateRestoreJobResponsePayload createRestoreJob(CreateRestoreJobRequestPayload createRestoreJobRequestPayload)
+    throws ClientException
+    {
+        try
+        {
+            QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
+            return sidecarClient.createRestoreJob(qualifiedTableName.keyspace(),
+                                                  qualifiedTableName.tableName(),
+                                                  createRestoreJobRequestPayload).get();
+        }
+        catch (ExecutionException | InterruptedException exception)
+        {
+            rethrowOnInterruptedException("Got interrupted when creating new restore job", exception);
+            throw new ClientException("Failed to create new restore job", exception);
+        }
+    }
+
+    public RestoreJobSummaryResponsePayload restoreJobSummary()
+    throws ClientException
+    {
+        try
+        {
+            QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
+            return sidecarClient.restoreJobSummary(qualifiedTableName.keyspace(),
+                                                   qualifiedTableName.tableName(),
+                                                   jobInfo.getRestoreJobId()).get();
+        }
+        catch (ExecutionException | InterruptedException exception)
+        {
+            rethrowOnInterruptedException("Got interrupted when retrieving restore job summary", exception);
+            throw new ClientException("Failed to retrieve restore job summary", exception);
+        }
+    }
+
+    /**
+     * Called from task level to create a restore slice with custom retry policy
+     *
+     * @param sidecarInstance           the sidecar instance where we will create the slice
+     * @param createSliceRequestPayload the payload to create the slice
+     * @throws ClientException when an error occurs during the slice creation
+     */
+    public void createRestoreSlice(SidecarInstance sidecarInstance,
+                                   CreateSliceRequestPayload createSliceRequestPayload) throws ClientException
+    {
+        try
+        {
+            QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
+            CreateRestoreJobSliceRequest request = new CreateRestoreJobSliceRequest(qualifiedTableName.keyspace(),
+                                                                                    qualifiedTableName.tableName(),
+                                                                                    jobInfo.getRestoreJobId(),
+                                                                                    createSliceRequestPayload);
+            sidecarClient.executeRequestAsync(sidecarClient.requestBuilder()
+                                                           .retryPolicy(new CustomRetryPolicyForCreateSlice())
+                                                           .singleInstanceSelectionPolicy(sidecarInstance)
+                                                           .request(request)
+                                                           .build())
+                         .get();
+        }
+        catch (ExecutionException | InterruptedException exception)
+        {
+            rethrowOnInterruptedException("Got interrupted when creating restore slice", exception);
+            throw new ClientException("Failed to create restore slice for payload: " + createSliceRequestPayload,
+                                      exception);
+        }
+    }
+
+    public void updateRestoreJob(UpdateRestoreJobRequestPayload updateRestoreJobRequestPayload) throws ClientException
+    {
+        try
+        {
+            QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
+            sidecarClient.updateRestoreJob(qualifiedTableName.keyspace(),
+                                           qualifiedTableName.tableName(),
+                                           jobInfo.getRestoreJobId(),
+                                           updateRestoreJobRequestPayload).get();
+        }
+        catch (ExecutionException | InterruptedException exception)
+        {
+            rethrowOnInterruptedException("Got interrupted when updating restore job", exception);
+            throw new ClientException("Failed to update restore job", exception);
+        }
+    }
+
+    public void abortRestoreJob() throws ClientException
+    {
+        try
+        {
+            QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
+            sidecarClient.abortRestoreJob(qualifiedTableName.keyspace(),
+                                          qualifiedTableName.tableName(),
+                                          jobInfo.getRestoreJobId()).get();
+        }
+        catch (ExecutionException | InterruptedException exception)
+        {
+            rethrowOnInterruptedException("Got interrupted when aborting restore job", exception);
+            throw new ClientException("Failed to abort restore job", exception);
+        }
+    }
+
+    /**
+     * {@link SidecarClient} by default retries till 200 Http response. But for create slice endpoint at task level,
+     * we want to wait only till 201 Http response. Hence using a custom retry policy
+     */
+    class CustomRetryPolicyForCreateSlice extends RetryPolicy
+    {
+        @Override
+        public void onResponse(CompletableFuture<HttpResponse> completableFuture,
+                               Request request, HttpResponse httpResponse, Throwable throwable,
+                               int attempts, boolean canRetryOnADifferentHost, RetryAction retryAction)
+        {
+            if (httpResponse != null && httpResponse.statusCode() == HttpResponseStatus.CREATED.code())
+            {
+                completableFuture.complete(httpResponse);
+            }
+            else
+            {
+                sidecarClient.defaultRetryPolicy().onResponse(completableFuture, request, httpResponse,
+                                                              throwable, attempts, canRetryOnADifferentHost,
+                                                              retryAction);
+            }
+        }
+    }
+
+    private void rethrowOnInterruptedException(String message, Exception cause) throws ClientException
+    {
+        if (cause instanceof InterruptedException)
+        {
+            Thread.currentThread().interrupt();
+            throw new ClientException(message, cause);
+        }
+    }
+}

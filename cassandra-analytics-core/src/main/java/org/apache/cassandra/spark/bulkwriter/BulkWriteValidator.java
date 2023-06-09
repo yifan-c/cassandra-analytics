@@ -22,6 +22,7 @@ package org.apache.cassandra.spark.bulkwriter;
 import java.math.BigInteger;
 import java.util.AbstractMap;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -65,17 +66,18 @@ public class BulkWriteValidator implements AutoCloseable
 
     public void validateInitialEnvironment()
     {
+        updateInstanceAvailability();
         validateCLOrFail();
     }
 
+    @Override
     public void close()
     {
         monitor.stop();
     }
 
-    private void validateCLOrFail()
+    public void validateCLOrFail()
     {
-        updateInstanceAvailability();
         validateClOrFail(failureHandler, LOGGER, phase, job);
     }
 
@@ -85,7 +87,7 @@ public class BulkWriteValidator implements AutoCloseable
                                         JobInfo job)
     {
         Collection<AbstractMap.SimpleEntry<Range<BigInteger>, Multimap<RingInstance, String>>> failedRanges =
-                failureHandler.getFailedEntries(job.getConsistencyLevel(), job.getLocalDC());
+        failureHandler.getFailedEntries(job.getConsistencyLevel(), job.getLocalDC());
         if (failedRanges.isEmpty())
         {
             logger.info("Succeeded {} with {}", phase, job.getConsistencyLevel());
@@ -93,10 +95,14 @@ public class BulkWriteValidator implements AutoCloseable
         else
         {
             String message = String.format("Failed to load %s ranges with %s for job %s in phase %s",
-                                           failedRanges.size(), job.getConsistencyLevel(), job.getId(), phase);
+                                           failedRanges.size(), job.getConsistencyLevel(), job.getRestoreJobId(), phase);
             logger.error(message);
-            failedRanges.forEach(failedRange -> failedRange.getValue().keySet().forEach(instance ->
-                    logger.error("Failed {} for {} on {}", phase, failedRange.getKey(), instance.toString())));
+            failedRanges.forEach(failedRange -> failedRange.getValue()
+                                                           .keySet()
+                                                           .forEach(instance ->
+                                                                    logger.error("Failed {} for {} on {}",
+                                                                                 phase, failedRange.getKey(),
+                                                                                 instance)));
             throw new RuntimeException(message);
         }
     }
@@ -108,7 +114,7 @@ public class BulkWriteValidator implements AutoCloseable
         LOGGER.debug("Commit Result: {}", commitResult);
         commitResult.failures.forEach((uuid, err) -> {
             LOGGER.warn("[{}]: {} failed on {} with message {}",
-                    uuid, phase, commitResult.instance.getNodeName(), err.errMsg);
+                        uuid, phase, commitResult.instance.getNodeName(), err.errMsg);
             failureHandler.addFailure(err.tokenRange, commitResult.instance, err.errMsg);
         });
     }
@@ -132,7 +138,7 @@ public class BulkWriteValidator implements AutoCloseable
         {
             // If we find any nodes in a totally invalid state, just throw as we can't continue
             String message = String.format("Instance (%s) is in an invalid state (%s) during import. "
-                                         + "Please rerun import once topology changes are complete.",
+                                           + "Please rerun import once topology changes are complete.",
                                            instance.getNodeName(), cluster.getInstanceState(instance));
             throw new RuntimeException(message);
         }
@@ -157,12 +163,24 @@ public class BulkWriteValidator implements AutoCloseable
         });
     }
 
+    public synchronized void updateFailureHandler(List<? extends StreamResult> results)
+    {
+        results.forEach(res -> {
+            res.failures.forEach(err -> failureHandler.addFailure(err.failedRange, err.instance, err.errMsg));
+        });
+    }
+
+    public synchronized void updateFailureHandler(Range<BigInteger> failedRange, RingInstance instance, String reason)
+    {
+        failureHandler.addFailure(failedRange, instance, reason);
+    }
+
     public void failIfRingChanged()
     {
         if (monitor.getRingChanged())
         {
             throw new RuntimeException(String.format("Ring changed during %s stage of import. "
-                                                   + "Please rerun import once topology changes are complete.",
+                                                     + "Please rerun import once topology changes are complete.",
                                                      phase));
         }
     }

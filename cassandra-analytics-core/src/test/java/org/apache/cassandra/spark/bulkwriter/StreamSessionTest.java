@@ -19,12 +19,15 @@
 
 package org.apache.cassandra.spark.bulkwriter;
 
+import java.io.File;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -44,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.iterableWithSize;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.startsWith;
@@ -62,6 +66,7 @@ public class StreamSessionTest
     private static final int REPLICATION_FACTOR = 3;
     private StreamSession ss;
     private MockBulkWriterContext writerContext;
+    private TransportContext.DirectDataBulkWriterContext transportContext;
     private List<String> expectedInstances;
     private CassandraRing<RingInstance> ring;
     private MockScheduledExecutorService executor;
@@ -75,8 +80,9 @@ public class StreamSessionTest
         ring = RingUtils.buildRing(0, "DC1", "test", 12);
         writerContext = getBulkWriterContext();
         tableWriter = new MockTableWriter(folder);
+        transportContext = (TransportContext.DirectDataBulkWriterContext) writerContext.transportContext();
         executor = new MockScheduledExecutorService();
-        ss = new StreamSession(writerContext, "sessionId", range, executor);
+        ss = new DirectStreamSession(transportContext, "sessionId", range, executor);
         expectedInstances = Lists.newArrayList("DC1-i1", "DC1-i2", "DC1-i3");
     }
 
@@ -90,14 +96,16 @@ public class StreamSessionTest
     }
 
     @Test
-    public void testScheduleStreamSendsCorrectFilesToCorrectInstances(
-            ) throws IOException, ExecutionException, InterruptedException
+    public void testScheduleStreamSendsCorrectFilesToCorrectInstances()
+    throws IOException, ExecutionException, InterruptedException
     {
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BOUND_VALUES);
         tr.close(writerContext, 1);
-        ss.scheduleStream(tr);
-        ss.close();  // Force "execution" of futures
+        assertThat(tr.rowCount(), is(1L));
+        ss.scheduleStream(tr, true);
+        StreamResult streamResult = ss.close();  // Force "execution" of futures
+        assertThat(streamResult.rowCount, is(1L));
         executor.assertFuturesCalled();
         assertThat(executor.futures.size(), equalTo(1));  // We only scheduled one SSTable
         assertThat(writerContext.getUploads().values().stream()
@@ -113,8 +121,8 @@ public class StreamSessionTest
     @Test
     public void testEmptyTokenRangeFails() throws IOException
     {
-        Exception exception = assertThrows(IllegalStateException.class, () -> ss = new StreamSession(
-                writerContext,
+        Exception exception = assertThrows(IllegalStateException.class, () -> ss = new DirectStreamSession(
+        transportContext,
                 "sessionId",
                 Range.range(BigInteger.valueOf(0L), BoundType.CLOSED, BigInteger.valueOf(0L), BoundType.OPEN)));
         assertThat(exception.getMessage(), matchesPattern("Partition range \\[0(‥|..)0\\) is mapping more than one range \\{}"));
@@ -123,11 +131,11 @@ public class StreamSessionTest
     @Test
     public void testMismatchedTokenRangeFails() throws IOException
     {
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(9999L), COLUMN_BOUND_VALUES);
         tr.close(writerContext, 1);
         IllegalStateException illegalStateException = assertThrows(IllegalStateException.class,
-                                                      () -> ss.scheduleStream(tr));
+                                                      () -> ss.scheduleStream(tr, true));
         assertThat(illegalStateException.getMessage(), matchesPattern(
                      "SSTable range \\[9999(‥|..)9999] should be enclosed in the partition range \\[101(‥|..)199]"));
     }
@@ -171,11 +179,11 @@ public class StreamSessionTest
     public void testOutDirCreationFailureCleansAllReplicas()
     {
         assertThrows(RuntimeException.class, () -> {
-            SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, tableWriter.getOutDir());
+            SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, tableWriter.getOutDir());
             tr.addRow(BigInteger.valueOf(102L), COLUMN_BOUND_VALUES);
             tr.close(writerContext, 1);
             tableWriter.removeOutDir();
-            ss.scheduleStream(tr);
+            ss.scheduleStream(tr, true);
             ss.close();
         });
 
@@ -186,14 +194,14 @@ public class StreamSessionTest
     }
 
     @Test
-    public void unavailableInstancesCreateErrors() throws IOException, ExecutionException, InterruptedException
+    public void unavailableInstancesCreateErrors() throws IOException
     {
         writerContext.setInstancesAreAvailable(false);
-        ss = new StreamSession(writerContext, "sessionId", range, executor);
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        ss = new DirectStreamSession(transportContext, "sessionId", range, executor);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BOUND_VALUES);
         tr.close(writerContext, 1);
-        ss.scheduleStream(tr);
+        ss.scheduleStream(tr, true);
         RuntimeException ex = assertThrows(RuntimeException.class, () -> ss.close());
         assertThat(ex.getMessage(), startsWith(LOAD_RANGE_ERROR_PREFIX));
     }
@@ -202,12 +210,13 @@ public class StreamSessionTest
     public void streamWithNoWritersReturnsEmptyStreamResult() throws ExecutionException, InterruptedException
     {
         writerContext.setInstancesAreAvailable(false);
-        ss = new StreamSession(writerContext, "sessionId", range, executor);
+        ss = new DirectStreamSession(transportContext, "sessionId", range, executor);
         StreamResult result = ss.close();
         assertThat(result.failures.size(), equalTo(0));
         assertThat(result.passed.size(), equalTo(0));
         assertThat(result.sessionID, equalTo("sessionId"));
         assertThat(result.tokenRange, equalTo(range));
+        assertThat(result.rowCount, is(0L));
     }
 
     @Test
@@ -218,26 +227,26 @@ public class StreamSessionTest
     }
 
     @Test
-    public void testLocalQuorumSucceedsWhenSingleCommitFails(
-            ) throws IOException, ExecutionException, InterruptedException
+    public void testLocalQuorumSucceedsWhenSingleCommitFails()
+    throws IOException, ExecutionException, InterruptedException
     {
-        ss = new StreamSession(writerContext, "sessionId", range, executor);
+        ss = new DirectStreamSession(transportContext, "sessionId", range, executor);
         AtomicBoolean success = new AtomicBoolean(true);
         writerContext.setCommitResultSupplier((uuids, dc) -> {
             // Return failed result for 1st result, success for the rest
             if (success.getAndSet(false))
             {
-                return new DataTransferApi.RemoteCommitResult(false, uuids, null, "");
+                return new DirectDataTransferApi.RemoteCommitResult(false, uuids, null, "");
             }
             else
             {
-                return new DataTransferApi.RemoteCommitResult(true, null, uuids, "");
+                return new DirectDataTransferApi.RemoteCommitResult(true, null, uuids, "");
             }
         });
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BOUND_VALUES);
         tr.close(writerContext, 1);
-        ss.scheduleStream(tr);
+        ss.scheduleStream(tr, true);
         ss.close();  // Force "execution" of futures
         executor.assertFuturesCalled();
         assertThat(writerContext.getUploads().values().stream()
@@ -251,27 +260,27 @@ public class StreamSessionTest
     }
 
     @Test
-    public void testLocalQuorumFailsWhenCommitsFail() throws IOException, ExecutionException, InterruptedException
+    public void testLocalQuorumFailsWhenCommitsFail() throws IOException
     {
-        ss = new StreamSession(writerContext, "sessionId", range, executor);
+        ss = new DirectStreamSession(transportContext, "sessionId", range, executor);
         AtomicBoolean success = new AtomicBoolean(true);
         // Return successful result for 1st result, failed for the rest
         writerContext.setCommitResultSupplier((uuids, dc) -> {
             if (success.getAndSet(false))
             {
-                return new DataTransferApi.RemoteCommitResult(true, null, uuids, "");
+                return new DirectDataTransferApi.RemoteCommitResult(true, null, uuids, "");
             }
             else
             {
-                return new DataTransferApi.RemoteCommitResult(false, uuids, null, "");
+                return new DirectDataTransferApi.RemoteCommitResult(false, uuids, null, "");
             }
         });
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BOUND_VALUES);
         tr.close(writerContext, 1);
-        ss.scheduleStream(tr);
+        ss.scheduleStream(tr, true);
         RuntimeException exception = assertThrows(RuntimeException.class, () -> ss.close());  // Force "execution" of futures
-        assertEquals("Failed to load 1 ranges with LOCAL_QUORUM for job " + writerContext.job().getId()
+        assertEquals("Failed to load 1 ranges with LOCAL_QUORUM for job " + writerContext.job().getRestoreJobId()
                    + " in phase UploadAndCommit", exception.getMessage());
         executor.assertFuturesCalled();
         assertThat(writerContext.getUploads().values().stream()
@@ -284,13 +293,39 @@ public class StreamSessionTest
         assertThat(instances, containsInAnyOrder(expectedInstances.toArray()));
     }
 
+    @Test
+    public void testTotalRowCounthMultipleSSTableWriters() throws Exception
+    {
+        Random rand = new Random(0);
+        long expectedRowCountPerSession = 0L;
+        for (int i = 0; i < 5; i++)
+        {
+            long rowsPerBatch = 1 + rand.nextInt(5); // produce 1 to 5 rows to insert
+            expectedRowCountPerSession += rowsPerBatch;
+            Path outputDir = new File(folder.toFile(), String.valueOf(i)).toPath();
+            Files.createDirectories(outputDir);
+            SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(new MockTableWriter(outputDir), outputDir);
+            for (int n = 0; n < rowsPerBatch; n++)
+            {
+                Map<String, Object> row = ImmutableMap.of("id", i, "date", n, "course", "course", "marks", n);
+                tr.addRow(BigInteger.valueOf(i * 10 + n).add(range.lowerEndpoint()), row);
+            }
+            tr.close(writerContext, 1);
+            assertThat(tr.rowCount(), is(rowsPerBatch));
+            ss.scheduleStream(tr, i == 4);
+        }
+
+        StreamResult streamResult = ss.close();  // Force "execution" of futures
+        assertThat(streamResult.rowCount, is(expectedRowCountPerSession));
+    }
+
     private void runFailedUpload() throws IOException, ExecutionException, InterruptedException
     {
         writerContext.setUploadSupplier(instance -> false);
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BOUND_VALUES);
         tr.close(writerContext, 1);
-        ss.scheduleStream(tr);
+        ss.scheduleStream(tr, true);
         RuntimeException ex = assertThrows(RuntimeException.class, () -> ss.close());
         assertThat(ex.getMessage(), startsWith(LOAD_RANGE_ERROR_PREFIX));
     }

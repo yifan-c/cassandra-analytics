@@ -21,6 +21,7 @@ package org.apache.cassandra.spark.bulkwriter;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -46,47 +47,17 @@ import org.jetbrains.annotations.NotNull;
 // CHECKSTYLE IGNORE: This class cannot be declared as final, because consumers should be able to extend it
 public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerializable
 {
-    private static final long serialVersionUID = 8241993502687688783L;
-    private static final Logger LOGGER = LoggerFactory.getLogger(CassandraBulkWriterContext.class);
+    private static final long serialVersionUID = 4992730766398015088L;
+    protected final Logger logger = LoggerFactory.getLogger(this.getClass());
 
     @NotNull
-    private final BulkSparkConf conf;
-    private final JobInfo jobInfo;
-    private transient DataTransferApi dataTransferApi;
-    private final CassandraClusterInfo clusterInfo;
-    private final SchemaInfo schemaInfo;
+    protected final BulkSparkConf conf;
+    protected final JobInfo jobInfo;
+    protected final ClusterInfo clusterInfo;
+    protected final SchemaInfo schemaInfo;
+    protected transient volatile TransportContext transportContext;
 
-    private CassandraBulkWriterContext(@NotNull BulkSparkConf conf,
-                                       @NotNull CassandraClusterInfo clusterInfo,
-                                       @NotNull StructType dfSchema,
-                                       SparkContext sparkContext)
-    {
-        this.conf = conf;
-        this.clusterInfo = clusterInfo;
-        CassandraRing<RingInstance> ring = clusterInfo.getRing(true);
-        jobInfo = new CassandraJobInfo(conf,
-                                       new TokenPartitioner(ring, conf.numberSplits, sparkContext.defaultParallelism(), conf.getCores()));
-        Preconditions.checkArgument(!conf.consistencyLevel.isLocal()
-                                    || (conf.localDC != null && ring.getReplicationFactor().getOptions().containsKey(conf.localDC)),
-                                    String.format("Keyspace %s is not replicated on datacenter %s",
-                                                  conf.keyspace, conf.localDC));
-
-        String keyspace = conf.keyspace;
-        String table = conf.table;
-
-        String keyspaceSchema = clusterInfo.getKeyspaceSchema(true);
-        CassandraBridge bridge = CassandraBridgeFactory.get(clusterInfo.getLowestCassandraVersion());
-        Partitioner partitioner = clusterInfo.getPartitioner();
-        String tableSchema = CqlUtils.extractTableSchema(keyspaceSchema, keyspace, table);
-        Set<String> udts = CqlUtils.extractUdts(keyspaceSchema, keyspace);
-        ReplicationFactor replicationFactor = CqlUtils.extractReplicationFactor(keyspaceSchema, keyspace);
-        int indexCount = CqlUtils.extractIndexCount(keyspaceSchema, keyspace, table);
-        CqlTable cqlTable = bridge.buildSchema(tableSchema, keyspace, replicationFactor, partitioner, udts, null, indexCount);
-
-        TableInfoProvider tableInfoProvider = new CqlTableInfoProvider(tableSchema, cqlTable);
-        schemaInfo = new CassandraSchemaInfo(new TableSchema(dfSchema, tableInfoProvider, conf.writeMode, conf.getTTLOptions(), conf.getTimestampOptions()));
-    }
-
+    // Static factory to create BulkWriterContext based on the requested Bulk Writer transport strategy
     public static BulkWriterContext fromOptions(@NotNull SparkContext sparkContext,
                                                 @NotNull Map<String, String> strOptions,
                                                 @NotNull StructType dfSchema)
@@ -94,11 +65,7 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
         Preconditions.checkNotNull(dfSchema);
 
         BulkSparkConf conf = new BulkSparkConf(sparkContext.getConf(), strOptions);
-        CassandraClusterInfo clusterInfo = new CassandraClusterInfo(conf);
-
-        clusterInfo.startupValidate();
-
-        CassandraBulkWriterContext bulkWriterContext = new CassandraBulkWriterContext(conf, clusterInfo, dfSchema, sparkContext);
+        CassandraBulkWriterContext bulkWriterContext = new CassandraBulkWriterContext(conf, dfSchema, sparkContext);
         ShutdownHookManager.addShutdownHook(org.apache.spark.util.ShutdownHookManager.TEMP_DIR_SHUTDOWN_PRIORITY(),
                                             ScalaFunctions.wrapLambda(bulkWriterContext::shutdown));
         bulkWriterContext.dialHome(sparkContext.version());
@@ -106,10 +73,48 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
         return bulkWriterContext;
     }
 
+    protected CassandraBulkWriterContext(@NotNull BulkSparkConf conf,
+                                         @NotNull StructType dfSchema,
+                                         SparkContext sparkContext)
+    {
+        this.conf = conf;
+        clusterInfo = initializeClusterInfo(conf);
+        clusterInfo.startupValidate();
+        CassandraRing<RingInstance> ring = clusterInfo.getRing(true);
+        Preconditions.checkArgument(!conf.consistencyLevel.isLocal()
+                                    || (conf.localDC != null && ring.getReplicationFactor().getOptions().containsKey(conf.localDC)),
+                                    String.format("Keyspace %s is not replicated on datacenter %s",
+                                                  conf.keyspace, conf.localDC));
+
+
+        CassandraBridge bridge = CassandraBridgeFactory.get(clusterInfo.getLowestCassandraVersion());
+        UUID jobId = bridge.getTimeUUID();
+        jobInfo = initializeJobInfo(conf, jobId, initializeTokenPartitioner(conf, sparkContext, ring));
+
+        transportContext = conf.getTransportInfo()
+                               .getTransport()
+                               .createContext(this.conf, jobInfo, clusterInfo, true);
+
+        String keyspace = conf.keyspace;
+        String table = conf.table;
+
+        String keyspaceSchema = clusterInfo.getKeyspaceSchema(true);
+
+        Partitioner partitioner = clusterInfo.getPartitioner();
+        String tableSchema = CqlUtils.extractTableSchema(keyspaceSchema, keyspace, table);
+        Set<String> udts = CqlUtils.extractUdts(keyspaceSchema, keyspace);
+        ReplicationFactor replicationFactor = CqlUtils.extractReplicationFactor(keyspaceSchema, keyspace);
+        int indexCount = CqlUtils.extractIndexCount(keyspaceSchema, keyspace, table);
+        CqlTable cqlTable = bridge.buildSchema(tableSchema, keyspace, replicationFactor, partitioner, udts, null, indexCount);
+
+        TableInfoProvider tableInfoProvider = initializeTableInfoProvider(tableSchema, cqlTable);
+        schemaInfo = initializeSchemaInfo(conf, dfSchema, tableInfoProvider);
+    }
+
     @Override
     public void shutdown()
     {
-        LOGGER.info("Shutting down {}", this);
+        logger.info("Shutting down {}", this);
         synchronized (this)
         {
             if (clusterInfo != null)
@@ -145,13 +150,20 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
 
     private void failIfKryoNotRegistered()
     {
-        LOGGER.error(KRYO_REGISTRATION_WARNING);
+        logger.error(KRYO_REGISTRATION_WARNING);
         throw new RuntimeException(KRYO_REGISTRATION_WARNING);
     }
 
     protected void dialHome(String sparkVersion)
     {
-        LOGGER.info("Dial home. clientConfig={}, sparkVersion={}", conf, sparkVersion);
+        logger.info("Dial home. clientConfig={}, sparkVersion={}", conf, sparkVersion);
+    }
+
+    @Override
+    @NotNull
+    public BulkSparkConf conf()
+    {
+        return conf;
     }
 
     @Override
@@ -175,13 +187,65 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
     }
 
     @Override
-    @NotNull
-    public synchronized DataTransferApi transfer()
+    public TransportContext transportContext()
     {
-        if (dataTransferApi == null)
+        // When running on driver, transportContext is created at the constructor, and it is not null
+        if (transportContext != null)
         {
-            dataTransferApi = new SidecarDataTransferApi(clusterInfo.getCassandraContext().getSidecarClient(), jobInfo, conf);
+            return transportContext;
         }
-        return dataTransferApi;
+
+        // When running on executor, transportContext is null. Synchronize to avoid multi-instantiation
+        synchronized (this)
+        {
+            if (transportContext == null)
+            {
+                transportContext = conf.getTransportInfo()
+                                       .getTransport()
+                                       .createContext(conf, jobInfo, clusterInfo, false);
+            }
+        }
+        return transportContext;
+    }
+
+    @NotNull
+    protected ClusterInfo initializeClusterInfo(@NotNull BulkSparkConf conf)
+    {
+        return new CassandraClusterInfo(conf);
+    }
+
+    @NotNull
+    protected static TokenPartitioner initializeTokenPartitioner(@NotNull BulkSparkConf conf,
+                                                                 @NotNull SparkContext sparkContext,
+                                                                 @NotNull CassandraRing<RingInstance> ring)
+    {
+        return new TokenPartitioner(ring, conf.numberSplits, sparkContext.defaultParallelism(), conf.getCores());
+    }
+
+    @NotNull
+    protected JobInfo initializeJobInfo(@NotNull BulkSparkConf conf,
+                                        @NotNull UUID jobId,
+                                        @NotNull TokenPartitioner tokenPartitioner)
+    {
+        return new CassandraJobInfo(jobId, conf, tokenPartitioner);
+    }
+
+    @NotNull
+    protected TableInfoProvider initializeTableInfoProvider(@NotNull String tableSchema,
+                                                            @NotNull CqlTable cqlTable)
+    {
+        return new CqlTableInfoProvider(tableSchema, cqlTable);
+    }
+
+    @NotNull
+    protected SchemaInfo initializeSchemaInfo(@NotNull BulkSparkConf conf,
+                                              @NotNull StructType dfSchema,
+                                              @NotNull TableInfoProvider tableInfoProvider)
+    {
+        return new CassandraSchemaInfo(new TableSchema(dfSchema,
+                                                       tableInfoProvider,
+                                                       conf.writeMode,
+                                                       conf.getTTLOptions(),
+                                                       conf.getTimestampOptions()));
     }
 }

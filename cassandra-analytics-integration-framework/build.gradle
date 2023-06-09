@@ -19,8 +19,6 @@ import java.nio.file.Paths
  * under the License.
  */
 
-import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
-
 project(':cassandra-analytics-integration-framework') {
     apply(plugin: 'java-library')
     apply(plugin: 'com.github.johnrengelman.shadow')
@@ -31,10 +29,10 @@ project(':cassandra-analytics-integration-framework') {
     dependencies {
 
         // These dependencies (sidecar + dtest jars) must be built by running `scripts/build-dependencies.sh`
-        implementation(group: 'org.apache.cassandra.sidecar', name: 'common', version: "${sidecarVersion}")
-        implementation(group: 'org.apache.cassandra.sidecar', name: 'adapters-base', version: "${sidecarVersion}")
+        implementation(group: 'org.apache.cassandra.sidecar', name: 'common', version: "${sidecarIntTestVersion}")
+        implementation(group: 'org.apache.cassandra.sidecar', name: 'adapters-base', version: "${sidecarIntTestVersion}")
         // The server itself
-        implementation (group: "org.apache.cassandra", name: "cassandra-sidecar", version: "${sidecarVersion}") {
+        implementation (group: "org.apache.cassandra", name: "cassandra-sidecar", version: "${sidecarIntTestVersion}") {
             exclude(group: 'org.apache.logging.log4j')
             exclude(group: 'org.slf4j')
             exclude(group: 'ch.qos.logback')

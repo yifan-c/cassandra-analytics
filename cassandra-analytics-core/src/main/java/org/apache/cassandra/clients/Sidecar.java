@@ -32,6 +32,8 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.apple.cassandra.sidecarclient.InternalSidecarClient;
+import com.apple.cassandra.sidecarclient.InternalVertxHttpClient;
 import o.a.c.sidecar.client.shaded.io.vertx.core.Vertx;
 import o.a.c.sidecar.client.shaded.io.vertx.core.VertxOptions;
 import org.apache.cassandra.secrets.SecretsProvider;
@@ -40,13 +42,14 @@ import org.apache.cassandra.sidecar.client.SidecarClient;
 import org.apache.cassandra.sidecar.client.SidecarClientConfig;
 import org.apache.cassandra.sidecar.client.SidecarClientConfigImpl;
 import org.apache.cassandra.sidecar.client.SidecarInstance;
+import org.apache.cassandra.sidecar.client.SidecarInstanceImpl;
 import org.apache.cassandra.sidecar.client.SidecarInstancesProvider;
-import org.apache.cassandra.sidecar.client.VertxHttpClient;
 import org.apache.cassandra.sidecar.client.VertxRequestExecutor;
 import org.apache.cassandra.sidecar.client.retry.ExponentialBackoffRetryPolicy;
 import org.apache.cassandra.sidecar.client.retry.RetryPolicy;
 import org.apache.cassandra.sidecar.common.NodeSettings;
 import org.apache.cassandra.spark.bulkwriter.BulkSparkConf;
+import org.apache.cassandra.spark.common.model.CassandraInstance;
 import org.apache.cassandra.spark.data.FileType;
 import org.apache.cassandra.spark.utils.BuildInfo;
 import org.apache.cassandra.spark.utils.MapUtils;
@@ -159,9 +162,9 @@ public final class Sidecar
                                                                            sidecarConfig.retryDelayMillis(),
                                                                            sidecarConfig.maxRetryDelayMillis());
 
-        VertxHttpClient vertxHttpClient = new VertxHttpClient(vertx, httpClientConfig);
+        InternalVertxHttpClient vertxHttpClient = new InternalVertxHttpClient(vertx, httpClientConfig);
         VertxRequestExecutor requestExecutor = new VertxRequestExecutor(vertxHttpClient);
-        return new SidecarClient(clusterConfig, requestExecutor, sidecarConfig, defaultRetryPolicy);
+        return new InternalSidecarClient(clusterConfig, requestExecutor, sidecarConfig, defaultRetryPolicy);
     }
 
     public static List<CompletableFuture<NodeSettings>> allNodeSettings(SidecarClient client,
@@ -176,6 +179,11 @@ public final class Sidecar
                                     return null;
                                 }))
                         .collect(Collectors.toList());
+    }
+
+    public static SidecarInstance toSidecarInstance(CassandraInstance instance, BulkSparkConf conf)
+    {
+        return new SidecarInstanceImpl(instance.getNodeName(), conf.getSidecarPort());
     }
 
     public static final class ClientConfig

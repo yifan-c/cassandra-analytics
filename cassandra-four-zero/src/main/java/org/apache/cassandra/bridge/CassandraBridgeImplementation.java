@@ -101,6 +101,7 @@ import org.apache.cassandra.spark.data.CqlField;
 import org.apache.cassandra.spark.data.CqlTable;
 import org.apache.cassandra.spark.data.CqlType;
 import org.apache.cassandra.spark.data.ReplicationFactor;
+import org.apache.cassandra.spark.data.SSTable;
 import org.apache.cassandra.spark.data.SSTablesSupplier;
 import org.apache.cassandra.spark.data.complex.CqlCollection;
 import org.apache.cassandra.spark.data.complex.CqlFrozen;
@@ -135,9 +136,11 @@ import org.apache.cassandra.spark.reader.CdcScannerBuilder;
 import org.apache.cassandra.spark.reader.CompactionStreamScanner;
 import org.apache.cassandra.spark.reader.IndexEntry;
 import org.apache.cassandra.spark.reader.IndexReader;
+import org.apache.cassandra.spark.reader.ReaderUtils;
 import org.apache.cassandra.spark.reader.Rid;
 import org.apache.cassandra.spark.reader.SchemaBuilder;
 import org.apache.cassandra.spark.reader.StreamScanner;
+import org.apache.cassandra.spark.reader.SummaryDbUtils;
 import org.apache.cassandra.spark.reader.common.IndexIterator;
 import org.apache.cassandra.spark.sparksql.filters.CdcOffsetFilter;
 import org.apache.cassandra.spark.sparksql.filters.PartitionKeyFilter;
@@ -150,6 +153,7 @@ import org.apache.cassandra.spark.utils.TimeProvider;
 import org.apache.cassandra.tools.JsonTransformer;
 import org.apache.cassandra.tools.Util;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.Pair;
 import org.apache.cassandra.utils.UUIDGen;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -645,6 +649,45 @@ public class CassandraBridgeImplementation extends CassandraBridge
                                           int bufferSizeMB)
     {
         return new SSTableWriterImplementation(inDirectory, partitioner, createStatement, insertStatement, rowBufferMode, bufferSizeMB);
+    }
+
+    @Override
+    public SSTableSummary getSSTableSummary(@NotNull String keyspace,
+                                            @NotNull String table,
+                                            @NotNull SSTable ssTable)
+    {
+        TableMetadata metadata = Schema.instance.getTableMetadata(keyspace, table);
+        if (metadata == null)
+        {
+            throw new RuntimeException("Could not create table metadata needed for reading SSTable summaries for keyspace: " + keyspace);
+        }
+        try
+        {
+            SummaryDbUtils.Summary summary = SummaryDbUtils.readSummary(metadata, ssTable);
+            Pair<DecoratedKey, DecoratedKey> keys = Pair.create(summary.first(), summary.last());
+            if (keys.left == null || keys.right == null)
+            {
+                keys = ReaderUtils.keysFromIndex(metadata, ssTable);
+            }
+            if (keys.left == null || keys.right == null)
+            {
+                throw new RuntimeException("Could not load SSTable first or last tokens for SSTable: " + ssTable.getDataFileName());
+            }
+            DecoratedKey first = keys.left;
+            DecoratedKey last = keys.right;
+            BigInteger firstToken = ReaderUtils.tokenToBigInteger(first.getToken());
+            BigInteger lastToken = ReaderUtils.tokenToBigInteger(last.getToken());
+            return new SSTableSummary(firstToken, lastToken, getSSTablePrefix(ssTable.getDataFileName()));
+        }
+        catch (final IOException exception)
+        {
+            throw new RuntimeException(exception);
+        }
+    }
+
+    private String getSSTablePrefix(String dataFileName)
+    {
+        return dataFileName.substring(0, dataFileName.lastIndexOf('-') + 1);
     }
 
     // CDC Configuration

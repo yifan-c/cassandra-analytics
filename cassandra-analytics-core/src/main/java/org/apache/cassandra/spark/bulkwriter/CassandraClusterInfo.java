@@ -19,7 +19,6 @@
 
 package org.apache.cassandra.spark.bulkwriter;
 
-import java.io.Closeable;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +52,7 @@ import org.apache.cassandra.spark.utils.CqlUtils;
 import org.apache.cassandra.spark.utils.FutureUtils;
 import org.jetbrains.annotations.NotNull;
 
-public class CassandraClusterInfo implements ClusterInfo, Closeable
+public class CassandraClusterInfo implements ClusterInfo
 {
     private static final long serialVersionUID = -6944818863462956767L;
     private static final Logger LOGGER = LoggerFactory.getLogger(CassandraClusterInfo.class);
@@ -95,13 +94,13 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
     {
         RingResponse ringResponse = getRingResponse();
         Map<RingInstance, InstanceAvailability> result = ringResponse
-                .stream()
-                .collect(Collectors.toMap(CassandraClusterInfo::getCasInstanceMethodsImpl,
-                                          this::determineInstanceAvailability));
+                                                         .stream()
+                                                         .collect(Collectors.toMap(CassandraClusterInfo::getCasInstanceMethodsImpl,
+                                                                                   this::determineInstanceAvailability));
         if (LOGGER.isDebugEnabled())
         {
             result.forEach((instance, availability) ->
-                    LOGGER.debug("Instance {} has availability {}", instance, availability));
+                           LOGGER.debug("Instance {} has availability {}", instance, availability));
         }
         return result;
     }
@@ -110,8 +109,8 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
     public boolean instanceIsAvailable(RingInstance ringInstance)
     {
         return instanceIsUp(ringInstance.getRingInstance())
-            && instanceIsNormal(ringInstance.getRingInstance())
-            && !instanceIsBlocked(ringInstance);
+               && instanceIsNormal(ringInstance.getRingInstance())
+               && !instanceIsBlocked(ringInstance);
     }
 
     @Override
@@ -120,6 +119,7 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
         return InstanceState.valueOf(ringInstance.getRingInstance().state().toUpperCase());
     }
 
+    @Override
     public CassandraContext getCassandraContext()
     {
         CassandraContext currentCassandraContext = cassandraContext;
@@ -140,7 +140,7 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
 
     /**
      * Gets a Cassandra Context
-     *
+     * <p>
      * NOTE: The caller of this method is required to call `shutdown` on the returned CassandraContext instance
      *
      * @return an instance of CassandraContext based on the configuration settings
@@ -207,9 +207,9 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
         try
         {
             List<SidecarInstance> instances = replicas
-                    .stream()
-                    .map(replica -> new SidecarInstanceImpl(replica.getNodeName(), conf.getSidecarPort()))
-                    .collect(Collectors.toList());
+                                              .stream()
+                                              .map(replica -> new SidecarInstanceImpl(replica.getNodeName(), conf.getSidecarPort()))
+                                              .collect(Collectors.toList());
             return getCassandraContext().getSidecarClient().timeSkew(instances).get();
         }
         catch (InterruptedException | ExecutionException exception)

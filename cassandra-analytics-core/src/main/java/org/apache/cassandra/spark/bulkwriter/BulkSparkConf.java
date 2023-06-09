@@ -38,8 +38,9 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.bridge.CassandraBridgeFactory;
 import org.apache.cassandra.bridge.RowBufferMode;
-import org.apache.cassandra.clients.SidecarInstanceImpl;
+import org.apache.cassandra.sidecar.client.SidecarInstanceImpl;
 import org.apache.cassandra.sidecar.client.SidecarInstance;
+import org.apache.cassandra.spark.bulkwriter.blobupload.StorageClientConfig;
 import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
 import org.apache.cassandra.spark.bulkwriter.util.SbwKryoRegistrator;
 import org.apache.cassandra.spark.utils.BuildInfo;
@@ -83,6 +84,10 @@ public class BulkSparkConf implements Serializable
     public static final int DEFAULT_RING_RETRY_COUNT = 3;
     public static final RowBufferMode DEFAULT_ROW_BUFFER_MODE = RowBufferMode.UNBUFFERED;
     public static final int DEFAULT_BATCH_SIZE_IN_ROWS = 1_000_000;
+    public static final long DEFAULT_STORAGE_CLIENT_KEEP_ALIVE_SECONDS = 60;
+    public static final int DEFAULT_STORAGE_CLIENT_CONCURRENCY = Runtime.getRuntime().availableProcessors() * 2;
+    public static final int DEFAULT_STORAGE_CLIENT_MAX_CHUNK_SIZE_IN_BYTES = 100 * 1024 * 1024; // 100 MiB
+    private static final long DEFAULT_MAX_SIZE_PER_SSTABLE_BUNDLE_IN_BYTES_S3_TRANSPORT = 5L * 1024 * 1024 * 1024;
 
     // NOTE: All Cassandra Analytics setting names must start with "spark" in order to not be ignored by Spark,
     //       and must not start with "spark.cassandra" so as to not conflict with Spark Cassandra Connector
@@ -99,8 +104,9 @@ public class BulkSparkConf implements Serializable
     public static final String SKIP_CLEAN                              = SETTING_PREFIX + "job.skip_clean";
     public static final String USE_OPENSSL                             = SETTING_PREFIX + "use_openssl";
     public static final String RING_RETRY_COUNT                        = SETTING_PREFIX + "ring_retry_count";
+    public static final int MINIMUM_JOB_KEEP_ALIVE_MINUTES             = 10;
 
-    public final Set<? extends SidecarInstance> sidecarInstances;
+    public final transient Set<? extends SidecarInstance> sidecarInstances;
     public final String keyspace;
     public final String table;
     public final ConsistencyLevel.CL consistencyLevel;
@@ -123,11 +129,16 @@ public class BulkSparkConf implements Serializable
     protected final String ttl;
     protected final String timestamp;
     protected final SparkConf conf;
-    public final boolean validateSSTables;
     public final int commitThreadsPerInstance;
     protected final int sidecarPort;
     protected boolean useOpenSsl;
     protected int ringRetryCount;
+    protected final StorageClientConfig storageClientConfig;
+    protected final DataTransportInfo dataTransportInfo;
+    protected final int jobKeepAliveMinutes;
+    // An optional unique identifier supplied by customer. The jobId is different from restoreJobId that is used internally.
+    // The value is null when absent
+    protected final String configuredJobId;
 
     public BulkSparkConf(SparkConf conf, Map<String, String> options)
     {
@@ -136,13 +147,13 @@ public class BulkSparkConf implements Serializable
         this.sidecarInstances = buildSidecarInstances(options, sidecarPort);
         this.keyspace = MapUtils.getOrThrow(options, WriterOptions.KEYSPACE.name());
         this.table = MapUtils.getOrThrow(options, WriterOptions.TABLE.name());
-        this.validateSSTables = MapUtils.getBoolean(options, WriterOptions.VALIDATE_SSTABLES.name(), true, "validate SSTables");
         this.skipExtendedVerify = MapUtils.getBoolean(options, WriterOptions.SKIP_EXTENDED_VERIFY.name(), true,
                                                       "skip extended verification of SSTables by Cassandra");
         this.consistencyLevel = ConsistencyLevel.CL.valueOf(MapUtils.getOrDefault(options, WriterOptions.BULK_WRITER_CL.name(), "EACH_QUORUM"));
         this.localDC = MapUtils.getOrDefault(options, WriterOptions.LOCAL_DC.name(), null);
         this.numberSplits = MapUtils.getInt(options, WriterOptions.NUMBER_SPLITS.name(), DEFAULT_NUM_SPLITS, "number of splits");
-        this.rowBufferMode = MapUtils.getEnumOption(options, WriterOptions.ROW_BUFFER_MODE.name(), DEFAULT_ROW_BUFFER_MODE, "row buffering mode");
+        this.rowBufferMode = MapUtils.getEnumOption(options, WriterOptions.ROW_BUFFER_MODE.name(),
+                                                    RowBufferMode.class, DEFAULT_ROW_BUFFER_MODE, "row buffering mode");
         this.sstableDataSizeInMB = MapUtils.getInt(options, WriterOptions.SSTABLE_DATA_SIZE_IN_MB.name(), 160, "sstable data size in MB");
         this.sstableBatchSize = MapUtils.getInt(options, WriterOptions.BATCH_SIZE.name(), 1_000_000, "sstable batch size");
         this.commitBatchSize = MapUtils.getInt(options, WriterOptions.COMMIT_BATCH_SIZE.name(), DEFAULT_COMMIT_BATCH_SIZE, "commit batch size");
@@ -155,13 +166,45 @@ public class BulkSparkConf implements Serializable
         this.truststorePath = MapUtils.getOrDefault(options, WriterOptions.TRUSTSTORE_PATH.name(), null);
         this.truststoreBase64Encoded = MapUtils.getOrDefault(options, WriterOptions.TRUSTSTORE_BASE64_ENCODED.name(), null);
         this.truststoreType = MapUtils.getOrDefault(options, WriterOptions.TRUSTSTORE_TYPE.name(), null);
-        this.writeMode = MapUtils.getEnumOption(options, WriterOptions.WRITE_MODE.name(), WriteMode.INSERT, "write mode");
+        this.writeMode = MapUtils.getEnumOption(options, WriterOptions.WRITE_MODE.name(), WriteMode.class, WriteMode.INSERT, "write mode");
         // For backwards-compatibility with port settings, use writer option if available,
         // else fall back to props, and then default if neither specified
         this.useOpenSsl = getBoolean(USE_OPENSSL, true);
         this.ringRetryCount = getInt(RING_RETRY_COUNT, DEFAULT_RING_RETRY_COUNT);
         this.ttl = MapUtils.getOrDefault(options, WriterOptions.TTL.name(), null);
         this.timestamp = MapUtils.getOrDefault(options, WriterOptions.TIMESTAMP.name(), null);
+        int storageClientConcurrency = MapUtils.getInt(options, WriterOptions.STORAGE_CLIENT_CONCURRENCY.name(),
+                                                       DEFAULT_STORAGE_CLIENT_CONCURRENCY, "storage client concurrency");
+        long storageClientKeepAliveSeconds = MapUtils.getLong(options, WriterOptions.STORAGE_CLIENT_THREAD_KEEP_ALIVE_SECONDS.name(),
+                                                              DEFAULT_STORAGE_CLIENT_KEEP_ALIVE_SECONDS);
+        int storageClientMaxChunkSizeInBytes = MapUtils.getInt(options, WriterOptions.STORAGE_CLIENT_MAX_CHUNK_SIZE_IN_BYTES.name(),
+                                                               DEFAULT_STORAGE_CLIENT_MAX_CHUNK_SIZE_IN_BYTES);
+        String storageClientHttpsProxy = MapUtils.getOrDefault(options, WriterOptions.STORAGE_CLIENT_HTTPS_PROXY.name(), null);
+        String storageClientEndpointOverride = MapUtils.getOrDefault(options, WriterOptions.STORAGE_CLIENT_ENDPOINT_OVERRIDE.name(), null);
+        long nioHttpClientConnectionAcquisitionTimeoutSeconds =
+        MapUtils.getLong(options, WriterOptions.STORAGE_CLIENT_NIO_HTTP_CLIENT_CONNECTION_ACQUISITION_TIMEOUT_SECONDS.name(), 300);
+        int nioHttpClientMaxConcurrency = MapUtils.getInt(options, WriterOptions.STORAGE_CLIENT_NIO_HTTP_CLIENT_MAX_CONCURRENCY.name(), 50);
+        this.storageClientConfig = new StorageClientConfig(storageClientConcurrency,
+                                                           storageClientKeepAliveSeconds,
+                                                           storageClientMaxChunkSizeInBytes,
+                                                           storageClientHttpsProxy,
+                                                           storageClientEndpointOverride,
+                                                           nioHttpClientConnectionAcquisitionTimeoutSeconds,
+                                                           nioHttpClientMaxConcurrency);
+        DataTransport dataTransport = MapUtils.getEnumOption(options, WriterOptions.DATA_TRANSPORT.name(),
+                                                             DataTransport.class, DataTransport.DIRECT, "Data Transport");
+        long maxSizePerSSTableBundleInBytesS3Transport = MapUtils.getLong(options, WriterOptions.MAX_SIZE_PER_SSTABLE_BUNDLE_IN_BYTES_S3_TRANSPORT.name(),
+                                                                          DEFAULT_MAX_SIZE_PER_SSTABLE_BUNDLE_IN_BYTES_S3_TRANSPORT);
+        String transportExtensionClass = MapUtils.getOrDefault(options, WriterOptions.DATA_TRANSPORT_EXTENSION_CLASS.name(), null);
+        this.dataTransportInfo = new DataTransportInfo(dataTransport, transportExtensionClass, maxSizePerSSTableBundleInBytesS3Transport);
+        this.jobKeepAliveMinutes = MapUtils.getInt(options, WriterOptions.JOB_KEEP_ALIVE_MINUTES.name(), MINIMUM_JOB_KEEP_ALIVE_MINUTES);
+        if (this.jobKeepAliveMinutes < MINIMUM_JOB_KEEP_ALIVE_MINUTES)
+        {
+            throw new IllegalArgumentException(String.format("Invalid value for the '%s' Bulk Writer option (%d). It cannot be less than the minimum %s",
+                                                             WriterOptions.JOB_KEEP_ALIVE_MINUTES, jobKeepAliveMinutes, MINIMUM_JOB_KEEP_ALIVE_MINUTES));
+        }
+        this.configuredJobId = MapUtils.getOrDefault(options, WriterOptions.JOB_ID.name(), null);
+
         validateEnvironment();
     }
 
@@ -393,6 +436,11 @@ public class BulkSparkConf implements Serializable
         return coresPerExecutor * numExecutors;
     }
 
+    public int getJobKeepAliveMinutes()
+    {
+        return jobKeepAliveMinutes;
+    }
+
     protected int getInt(String settingName, int defaultValue)
     {
         String finalSetting = getSettingNameOrDeprecatedName(settingName);
@@ -467,7 +515,7 @@ public class BulkSparkConf implements Serializable
         }
     }
 
-    protected SparkConf getConf()
+    public SparkConf getSparkConf()
     {
         return conf;
     }
@@ -480,6 +528,16 @@ public class BulkSparkConf implements Serializable
     public int getRingRetryCount()
     {
         return ringRetryCount;
+    }
+
+    public StorageClientConfig getStorageClientConfig()
+    {
+        return storageClientConfig;
+    }
+
+    public DataTransportInfo getTransportInfo()
+    {
+        return dataTransportInfo;
     }
 
     public boolean hasKeystoreAndKeystorePassword()

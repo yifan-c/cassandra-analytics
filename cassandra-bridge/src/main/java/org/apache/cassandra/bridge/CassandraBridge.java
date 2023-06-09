@@ -46,6 +46,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.annotation.Nullable;
+import javax.validation.constraints.NotNull;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
@@ -61,6 +63,7 @@ import org.apache.cassandra.spark.cdc.watermarker.Watermarker;
 import org.apache.cassandra.spark.data.CqlField;
 import org.apache.cassandra.spark.data.CqlTable;
 import org.apache.cassandra.spark.data.ReplicationFactor;
+import org.apache.cassandra.spark.data.SSTable;
 import org.apache.cassandra.spark.data.SSTablesSupplier;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
 import org.apache.cassandra.spark.reader.IndexEntry;
@@ -72,8 +75,6 @@ import org.apache.cassandra.spark.sparksql.filters.PruneColumnFilter;
 import org.apache.cassandra.spark.sparksql.filters.SparkRangeFilter;
 import org.apache.cassandra.spark.stats.Stats;
 import org.apache.cassandra.spark.utils.TimeProvider;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Provides an abstract interface for all calls to the Cassandra code of a specific version
@@ -398,6 +399,11 @@ public abstract class CassandraBridge
                                                    RowBufferMode rowBufferMode,
                                                    int bufferSizeMB);
 
+    // this method is currently only used by blob upload feature in writer.
+    public abstract SSTableSummary getSSTableSummary(@NotNull String keyspace,
+                                                     @NotNull String table,
+                                                     @NotNull SSTable ssTable);
+
     // CDC Configuration
 
     public abstract void setCDC(Path path);
@@ -435,7 +441,7 @@ public abstract class CassandraBridge
 
         /**
          * Get the range tombstones for this partition
-         *
+         * <p>
          * TODO: IRow is used as a partition; semantically, it does not fit
          *
          * @return null if no range tombstones exist. Otherwise, return a list of range tombstones
@@ -531,9 +537,9 @@ public abstract class CassandraBridge
     // Kryo Serializers
 
     public abstract Serializer<? extends IPartitionUpdateWrapper> getPartitionUpdateSerializer(
-            String keyspace,
-            String table,
-            boolean includePartitionUpdate);
+    String keyspace,
+    String table,
+    boolean includePartitionUpdate);
 
     // Kryo/Java (De-)Serialization
 

@@ -19,66 +19,48 @@
 
 package org.apache.cassandra.spark.bulkwriter;
 
-import java.io.File;
-import java.io.IOException;
 import java.math.BigInteger;
-import java.nio.file.DirectoryStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Range;
-import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.spark.bulkwriter.token.CassandraRing;
 import org.apache.cassandra.spark.bulkwriter.token.ReplicaAwareFailureHandler;
-import org.apache.cassandra.spark.common.MD5Hash;
-import org.apache.cassandra.spark.common.SSTables;
 
-public class StreamSession
+public abstract class StreamSession<T extends TransportContext>
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(StreamSession.class);
-    private final BulkWriterContext writerContext;
-    private final String sessionID;
-    private final Range<BigInteger> tokenRange;
-    final List<RingInstance> replicas;
-    private final ArrayList<StreamError> errors = new ArrayList<>();
-    private final ReplicaAwareFailureHandler<RingInstance> failureHandler;
-    private final AtomicInteger nextSSTableIdx = new AtomicInteger(1);
-    private final ExecutorService executor;
-    private final List<Future<?>> futures = new ArrayList<>();
-    private final CassandraRing<RingInstance> ring;
-    private static final String WRITE_PHASE = "UploadAndCommit";
-
-    public StreamSession(BulkWriterContext writerContext, String sessionID, Range<BigInteger> tokenRange)
-    {
-        this(writerContext, sessionID, tokenRange, Executors.newSingleThreadExecutor());
-    }
+    protected final T transportContext;
+    protected final String sessionID;
+    protected final Range<BigInteger> tokenRange;
+    protected final List<RingInstance> replicas;
+    protected final List<StreamError> errors = new ArrayList<>();
+    protected final ReplicaAwareFailureHandler<RingInstance> failureHandler;
+    protected final ExecutorService executor;
+    protected final List<Future<?>> futures = new ArrayList<>();
+    protected final CassandraRing<RingInstance> ring;
+    protected long rowCount = 0; // total number of rows written by the SSTableWriter
 
     @VisibleForTesting
-    public StreamSession(BulkWriterContext writerContext,
-                         String sessionID,
-                         Range<BigInteger> tokenRange,
-                         ExecutorService executor)
+    protected StreamSession(T transportContext,
+                            String sessionID,
+                            Range<BigInteger> tokenRange,
+                            ExecutorService executor)
     {
-        this.writerContext = writerContext;
-        this.ring = writerContext.cluster().getRing(true);
+        this.transportContext = transportContext;
+        this.ring = transportContext.cluster().getRing(true);
         this.failureHandler = new ReplicaAwareFailureHandler<>(ring);
         this.sessionID = sessionID;
         this.tokenRange = tokenRange;
@@ -86,18 +68,19 @@ public class StreamSession
         this.executor = executor;
     }
 
-    public void scheduleStream(SSTableWriter ssTableWriter)
+    public void scheduleStream(SortedSSTableWriter sstableWriter, boolean isLast)
     {
-        Preconditions.checkState(!ssTableWriter.getTokenRange().isEmpty(), "Trying to stream empty SSTable");
+        Preconditions.checkState(!sstableWriter.getTokenRange().isEmpty(), "Trying to stream empty SSTable");
 
-        Preconditions.checkState(tokenRange.encloses(ssTableWriter.getTokenRange()),
+        Preconditions.checkState(tokenRange.encloses(sstableWriter.getTokenRange()),
                                  String.format("SSTable range %s should be enclosed in the partition range %s",
-                                               ssTableWriter.getTokenRange(), tokenRange));
+                                               sstableWriter.getTokenRange(), tokenRange));
 
-        futures.add(executor.submit(() -> sendSSTables(writerContext, ssTableWriter)));
+        rowCount += sstableWriter.rowCount();
+        doScheduleStream(sstableWriter, isLast);
     }
 
-    public StreamResult close() throws ExecutionException, InterruptedException
+    protected void closeFutures()
     {
         for (Future future : futures)
         {
@@ -108,38 +91,13 @@ public class StreamSession
             catch (Exception exception)
             {
                 LOGGER.error("Unexpected stream errMsg. "
-                           + "Stream errors should have converted to StreamError and sent to driver", exception);
+                             + "Stream errors should have converted to StreamError and sent to driver", exception);
                 throw new RuntimeException(exception);
             }
         }
 
         executor.shutdown();
-        LOGGER.info("[{}]: Closing stream session. Sent {} SSTables", sessionID, futures.size());
-
-        if (futures.isEmpty())
-        {
-            return new StreamResult(sessionID, tokenRange, new ArrayList<>(), new ArrayList<>());
-        }
-        else
-        {
-            StreamResult streamResult = new StreamResult(sessionID, tokenRange, errors, new ArrayList<>(replicas));
-            List<CommitResult> cr = commit(streamResult);
-            streamResult.setCommitResults(cr);
-            LOGGER.debug("StreamResult: {}", streamResult);
-            BulkWriteValidator.validateClOrFail(failureHandler, LOGGER, WRITE_PHASE, writerContext.job());
-            return streamResult;
-        }
-    }
-
-    private List<CommitResult> commit(StreamResult streamResult) throws ExecutionException, InterruptedException
-    {
-        try (CommitCoordinator cc = CommitCoordinator.commit(writerContext, new StreamResult[]{streamResult}))
-        {
-            List<CommitResult> commitResults = cc.get();
-            LOGGER.debug("All CommitResults: {}", commitResults);
-            commitResults.forEach(cr -> BulkWriteValidator.updateFailureHandler(cr, WRITE_PHASE, failureHandler));
-            return commitResults;
-        }
+        LOGGER.info("[{}]: Closing stream session. Sent {} batches of SSTables", sessionID, futures.size());
     }
 
     @VisibleForTesting
@@ -164,137 +122,35 @@ public class StreamSession
     private List<RingInstance> validateReplicas(List<RingInstance> replicaList)
     {
         Map<Boolean, List<RingInstance>> groups = replicaList.stream()
-                .collect(Collectors.partitioningBy(writerContext.cluster()::instanceIsAvailable));
+                                                             .collect(Collectors.partitioningBy(transportContext.cluster()::instanceIsAvailable));
         groups.get(false).forEach(instance -> {
             String errorMessage = String.format("Instance %s is not available.", instance.getNodeName());
             failureHandler.addFailure(tokenRange, instance, errorMessage);
-            errors.add(new StreamError(instance, errorMessage));
+            errors.add(new StreamError(tokenRange, instance, errorMessage));
         });
         return groups.get(true);
     }
 
-    private void sendSSTables(BulkWriterContext writerContext, SSTableWriter ssTableWriter)
-    {
-        try (DirectoryStream<Path> dataFileStream = Files.newDirectoryStream(ssTableWriter.getOutDir(), "*Data.db"))
-        {
-            for (Path dataFile : dataFileStream)
-            {
-                int ssTableIdx = nextSSTableIdx.getAndIncrement();
-
-                LOGGER.info("[{}]: Pushing SSTable {} to replicas {}",
-                            sessionID, dataFile, replicas.stream()
-                                                         .map(RingInstance::getNodeName)
-                                                         .collect(Collectors.joining(",")));
-                replicas.removeIf(replica -> !trySendSSTableToReplica(writerContext, ssTableWriter, dataFile, ssTableIdx, replica));
-            }
-        }
-        catch (IOException exception)
-        {
-            LOGGER.error("[{}]: Unexpected exception while streaming SSTables {}",
-                         sessionID, ssTableWriter.getOutDir());
-            cleanAllReplicas();
-            throw new RuntimeException(exception);
-        }
-        finally
-        {
-            // Clean up SSTable files once the task is complete
-            File tempDir = ssTableWriter.getOutDir().toFile();
-            LOGGER.info("[{}]:Removing temporary files after stream session from {}", sessionID, tempDir);
-            try
-            {
-                FileUtils.deleteDirectory(tempDir);
-            }
-            catch (IOException exception)
-            {
-                LOGGER.warn("[{}]:Failed to delete temporary directory {}", sessionID, tempDir, exception);
-            }
-        }
-    }
-
-    private boolean trySendSSTableToReplica(BulkWriterContext writerContext,
-                                            SSTableWriter ssTableWriter,
-                                            Path dataFile,
-                                            int ssTableIdx,
-                                            RingInstance replica)
-    {
-        try
-        {
-            sendSSTableToReplica(writerContext, dataFile, ssTableIdx, replica, ssTableWriter.getFileHashes());
-            return true;
-        }
-        catch (Exception exception)
-        {
-            LOGGER.error("[{}]: Failed to stream range {} to instance {}",
-                         sessionID, tokenRange, replica.getNodeName(), exception);
-            writerContext.cluster().refreshClusterInfo();
-            failureHandler.addFailure(tokenRange, replica, exception.getMessage());
-            errors.add(new StreamError(replica, exception.getMessage()));
-            clean(writerContext, replica, sessionID);
-            return false;
-        }
-    }
+    /**
+     * Schedule the stream on {@link #executor}
+     * @param sstableWriter produces SSTable(s)
+     * @param isLast indicate whether it is the last flush for the task
+     */
+    protected abstract void doScheduleStream(SortedSSTableWriter sstableWriter, boolean isLast);
 
     /**
-     * Get all replicas and clean temporary state on them
+     * Send the SSTable(s) written by SSTableWriter
+     * The code runs on a separate thread
+     *
+     * @param sstableWriter produces SSTable(s)
      */
-    private void cleanAllReplicas()
-    {
-        Set<RingInstance> instances = new HashSet<>(replicas);
-        errors.forEach(streamError -> instances.add(streamError.instance));
-        instances.forEach(instance -> clean(writerContext, instance, sessionID));
-    }
+    protected abstract void sendSSTables(SortedSSTableWriter sstableWriter);
 
-    private void sendSSTableToReplica(BulkWriterContext writerContext,
-                                      Path dataFile,
-                                      int ssTableIdx,
-                                      RingInstance instance,
-                                      Map<Path, MD5Hash> fileHashes) throws Exception
-    {
-        try (DirectoryStream<Path> componentFileStream =
-                Files.newDirectoryStream(dataFile.getParent(), SSTables.getSSTableBaseName(dataFile) + "*"))
-        {
-            for (Path componentFile : componentFileStream)
-            {
-                if (componentFile.getFileName().toString().endsWith("Data.db"))
-                {
-                    continue;
-                }
-                sendSSTableComponent(writerContext, componentFile, ssTableIdx, instance, fileHashes.get(componentFile));
-            }
-            sendSSTableComponent(writerContext, dataFile, ssTableIdx, instance, fileHashes.get(dataFile));
-        }
-    }
-
-    private void sendSSTableComponent(BulkWriterContext writerContext,
-                                      Path componentFile,
-                                      int ssTableIdx,
-                                      RingInstance instance,
-                                      MD5Hash fileHash) throws Exception
-    {
-        Preconditions.checkNotNull(fileHash, "All files must have a hash. SSTableWriter should have calculated these. This is a bug.");
-        long fileSize = Files.size(componentFile);
-        LOGGER.info("[{}]: Uploading {} to {}: Size is {}", sessionID, componentFile, instance.getNodeName(), fileSize);
-        writerContext.transfer().uploadSSTableComponent(componentFile, ssTableIdx, instance, sessionID, fileHash);
-    }
-
-    public static void clean(BulkWriterContext writerContext, RingInstance instance, String sessionID)
-    {
-        if (writerContext.job().getSkipClean())
-        {
-            LOGGER.info("Skip clean requested - not cleaning SSTable session {} on instance {}",
-                        sessionID, instance.getNodeName());
-            return;
-        }
-        String jobID = writerContext.job().getId().toString();
-        LOGGER.info("Cleaning SSTable session {} on instance {}", sessionID, instance.getNodeName());
-        try
-        {
-            writerContext.transfer().cleanUploadSession(instance, sessionID, jobID);
-        }
-        catch (Exception exception)
-        {
-            LOGGER.warn("Failed to clean SSTables on {} for session {} and ignoring errMsg",
-                        instance.getNodeName(), sessionID, exception);
-        }
-    }
+    /**
+     * Close the stream session
+     * @return stream result
+     * @throws ExecutionException execution exception during streaming
+     * @throws InterruptedException
+     */
+    public abstract StreamResult close() throws ExecutionException, InterruptedException;
 }

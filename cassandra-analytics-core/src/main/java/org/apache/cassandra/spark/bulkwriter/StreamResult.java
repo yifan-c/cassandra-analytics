@@ -21,39 +21,30 @@ package org.apache.cassandra.spark.bulkwriter;
 
 import java.io.Serializable;
 import java.math.BigInteger;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.google.common.collect.Range;
 
-public class StreamResult implements Serializable
+public abstract class StreamResult implements Serializable
 {
+    private static final long serialVersionUID = -6533153391143872430L;
     public final String sessionID;
     public final Range<BigInteger> tokenRange;
-    public final ArrayList<StreamError> failures;
-    public List<CommitResult> commitResults;  // CHECKSTYLE IGNORE: Public mutable field
-    public final ArrayList<RingInstance> passed;
+    public final List<StreamError> failures;
+    public final List<RingInstance> passed;
+    public final long rowCount;
 
     public StreamResult(String sessionID,
                         Range<BigInteger> tokenRange,
-                        ArrayList<StreamError> failures,
-                        ArrayList<RingInstance> passed)
+                        List<StreamError> failures,
+                        List<RingInstance> passed,
+                        long rowCount)
     {
         this.sessionID = sessionID;
         this.tokenRange = tokenRange;
-        this.failures = failures;
-        this.passed = passed;
-    }
-
-    public void setCommitResults(List<CommitResult> commitResult)
-    {
-        this.commitResults = commitResult;
-    }
-
-    @Override
-    public String toString()
-    {
-        return String.format("StreamResult{sessionID='%s', tokenRange=%s, failures=%s, commitResults=%s, passed=%s}",
-                             sessionID, tokenRange, failures, commitResults, passed);
+        this.failures = Collections.unmodifiableList(failures);
+        this.passed = Collections.unmodifiableList(passed);
+        this.rowCount = rowCount;
     }
 }

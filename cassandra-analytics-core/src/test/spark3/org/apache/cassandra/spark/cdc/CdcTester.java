@@ -72,8 +72,8 @@ public class CdcTester
 
     public static void setup(CassandraBridge bridge, Path testFolder)
     {
-        bridge.setCommitLogPath(testFolder.getRoot());
-        bridge.setCDC(testFolder.getRoot());
+        bridge.setCommitLogPath(testFolder);
+        bridge.setCDC(testFolder);
         COMMIT_LOG = bridge.testCommitLog(testFolder.toFile());
     }
 

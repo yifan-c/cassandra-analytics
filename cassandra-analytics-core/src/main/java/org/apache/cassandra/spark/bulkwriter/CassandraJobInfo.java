@@ -22,19 +22,20 @@ package org.apache.cassandra.spark.bulkwriter;
 import java.util.UUID;
 
 import org.apache.cassandra.bridge.RowBufferMode;
+import org.apache.cassandra.sidecar.common.data.QualifiedTableName;
 import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
 import org.jetbrains.annotations.NotNull;
 
 public class CassandraJobInfo implements JobInfo
 {
     private static final long serialVersionUID = 6140098484732683759L;
-    private final BulkSparkConf conf;
-    @NotNull
-    private final UUID jobId = UUID.randomUUID();
-    private final TokenPartitioner tokenPartitioner;
+    protected final BulkSparkConf conf;
+    protected final UUID restoreJobId;
+    protected final TokenPartitioner tokenPartitioner;
 
-    CassandraJobInfo(BulkSparkConf conf, TokenPartitioner tokenPartitioner)
+    protected CassandraJobInfo(UUID restoreJobId, BulkSparkConf conf, TokenPartitioner tokenPartitioner)
     {
+        this.restoreJobId = restoreJobId;
         this.conf = conf;
         this.tokenPartitioner = tokenPartitioner;
     }
@@ -77,12 +78,6 @@ public class CassandraJobInfo implements JobInfo
     }
 
     @Override
-    public boolean validateSSTables()
-    {
-        return conf.validateSSTables;
-    }
-
-    @Override
     public boolean skipExtendedVerify()
     {
         return conf.skipExtendedVerify;
@@ -95,15 +90,27 @@ public class CassandraJobInfo implements JobInfo
     }
 
     @Override
+    public DataTransportInfo getTransportInfo()
+    {
+        return conf.getTransportInfo();
+    }
+
+    @Override
     public int getCommitThreadsPerInstance()
     {
         return conf.commitThreadsPerInstance;
     }
 
     @Override
-    public UUID getId()
+    public UUID getRestoreJobId()
     {
-        return jobId;
+        return restoreJobId;
+    }
+
+    @Override
+    public String getConfiguredJobId()
+    {
+        return conf.configuredJobId;
     }
 
     @Override
@@ -114,8 +121,8 @@ public class CassandraJobInfo implements JobInfo
 
     @Override
     @NotNull
-    public String getFullTableName()
+    public QualifiedTableName getQualifiedTableName()
     {
-        return conf.keyspace + "." + conf.table;
+        return new QualifiedTableName(conf.keyspace, conf.table);
     }
 }

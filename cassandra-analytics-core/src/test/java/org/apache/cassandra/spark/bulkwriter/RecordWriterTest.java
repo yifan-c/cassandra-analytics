@@ -130,7 +130,7 @@ public class RecordWriterTest
     @Test
     public void testCorruptSSTable()
     {
-        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SSTableWriter(tw.setOutDir(path), path));
+        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) ->  new SortedSSTableWriter(tw.setOutDir(path), path));
         Iterator<Tuple2<DecoratedKey, Object[]>> data = generateData(5, true);
         // TODO: Add better error handling with human-readable exception messages in SSTableReader::new
         // That way we can assert on the exception thrown here
@@ -140,7 +140,7 @@ public class RecordWriterTest
     @Test
     public void testWriteWithOutOfRangeTokenFails()
     {
-        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SSTableWriter(tw, folder));
+        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SortedSSTableWriter(tw, folder));
         Iterator<Tuple2<DecoratedKey, Object[]>> data = generateData(5, false);
         RuntimeException ex = assertThrows(RuntimeException.class, () -> rw.write(data));
         assertThat(ex.getMessage(),
@@ -151,7 +151,7 @@ public class RecordWriterTest
     @Test
     public void testAddRowThrowingFails()
     {
-        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SSTableWriter(tw, folder));
+        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SortedSSTableWriter(tw, folder));
         tw.setAddRowThrows(true);
         Iterator<Tuple2<DecoratedKey, Object[]>> data = generateData(5, true);
         RuntimeException ex = assertThrows(RuntimeException.class, () -> rw.write(data));
@@ -163,7 +163,7 @@ public class RecordWriterTest
     {
         // Mock context returns a 60-minute allowable time skew, so we use something just outside the limits
         long sixtyOneMinutesInMillis = TimeUnit.MINUTES.toMillis(61);
-        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SSTableWriter(tw, folder));
+        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, (wc, path) -> new SortedSSTableWriter(tw, folder));
         writerContext.setTimeProvider(() -> System.currentTimeMillis() - sixtyOneMinutesInMillis);
         Iterator<Tuple2<DecoratedKey, Object[]>> data = generateData(5, true);
         RuntimeException ex = assertThrows(RuntimeException.class, () -> rw.write(data));
@@ -176,7 +176,7 @@ public class RecordWriterTest
         // Mock context returns a 60-minute allowable time skew, so we use something just inside the limits
         long fiftyNineMinutesInMillis = TimeUnit.MINUTES.toMillis(59);
         long remoteTime = System.currentTimeMillis() - fiftyNineMinutesInMillis;
-        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, SSTableWriter::new);
+        rw = new RecordWriter(writerContext, COLUMN_NAMES, () -> tc, SortedSSTableWriter::new);
         writerContext.setTimeProvider(() -> remoteTime);  // Return a very low "current time" to make sure we fail if skew is too bad
         Iterator<Tuple2<DecoratedKey, Object[]>> data = generateData(5, true);
         rw.write(data);
@@ -215,7 +215,7 @@ public class RecordWriterTest
                                          String[] columnNames,
                                          int uploadedTables)
     {
-        RecordWriter rw = new RecordWriter(writerContext, columnNames, () -> tc, SSTableWriter::new);
+        RecordWriter rw = new RecordWriter(writerContext, columnNames, () -> tc, SortedSSTableWriter::new);
         rw.write(data);
         Map<CassandraInstance, List<UploadRequest>> uploads = writerContext.getUploads();
         assertThat(uploads.keySet().size(), is(REPLICA_COUNT));  // Should upload to 3 replicas

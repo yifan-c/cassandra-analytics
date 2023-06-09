@@ -70,6 +70,7 @@ public class StreamSessionConsistencyTest
     private MockTableWriter tableWriter;
     private StreamSession streamSession;
     private MockBulkWriterContext writerContext;
+    private TransportContext.DirectDataBulkWriterContext transportContext;
     private final MockScheduledExecutorService executor = new MockScheduledExecutorService();
 
     public static Collection<Object[]> data()
@@ -85,7 +86,8 @@ public class StreamSessionConsistencyTest
     {
         tableWriter = new MockTableWriter(folder);
         writerContext = new MockBulkWriterContext(RING, "cassandra-4.0.0", consistencyLevel);
-        streamSession = new StreamSession(writerContext, "sessionId", RANGE, executor);
+        transportContext = (TransportContext.DirectDataBulkWriterContext) writerContext.transportContext();
+        streamSession = new DirectStreamSession(transportContext, "sessionId", RANGE, executor);
     }
 
     @ParameterizedTest(name = "CL: {0}, numFailures: {1}")
@@ -103,23 +105,23 @@ public class StreamSessionConsistencyTest
         writerContext.setCommitResultSupplier((uuids, dc) -> {
             if (dcFailures.get(dc).getAndDecrement() > 0)
             {
-                return new DataTransferApi.RemoteCommitResult(false, null, uuids, "");
+                return new DirectDataTransferApi.RemoteCommitResult(false, null, uuids, "");
             }
             else
             {
-                return new DataTransferApi.RemoteCommitResult(true, uuids, null, "");
+                return new DirectDataTransferApi.RemoteCommitResult(true, uuids, null, "");
             }
         });
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BIND_VALUES);
         tr.close(writerContext, 1);
-        streamSession.scheduleStream(tr);
+        streamSession.scheduleStream(tr, true);
         if (shouldFail)
         {
             RuntimeException exception = assertThrows(RuntimeException.class,
                                                       () -> streamSession.close());  // Force "execution" of futures
             assertEquals("Failed to load 1 ranges with " + consistencyLevel
-                       + " for job " + writerContext.job().getId()
+                       + " for job " + writerContext.job().getRestoreJobId()
                        + " in phase UploadAndCommit", exception.getMessage());
         }
         else
@@ -150,16 +152,16 @@ public class StreamSessionConsistencyTest
         ImmutableMap<String, AtomicInteger> dcFailures = ImmutableMap.of("DC1", dc1Failures, "DC2", dc2Failures);
         boolean shouldFail = calculateFailure(consistencyLevel, dc1Failures.get(), dc2Failures.get());
         writerContext.setUploadSupplier(instance -> dcFailures.get(instance.getDataCenter()).getAndDecrement() <= 0);
-        SSTableWriter tr = new NonValidatingTestSSTableWriter(tableWriter, folder);
+        SortedSSTableWriter tr = new NonValidatingTestSortedSSTableWriter(tableWriter, folder);
         tr.addRow(BigInteger.valueOf(102L), COLUMN_BIND_VALUES);
         tr.close(writerContext, 1);
-        streamSession.scheduleStream(tr);
+        streamSession.scheduleStream(tr, true);
         if (shouldFail)
         {
             RuntimeException exception = assertThrows(RuntimeException.class,
                                                       () -> streamSession.close());  // Force "execution" of futures
             assertEquals("Failed to load 1 ranges with " + consistencyLevel
-                       + " for job " + writerContext.job().getId()
+                       + " for job " + writerContext.job().getRestoreJobId()
                        + " in phase UploadAndCommit", exception.getMessage());
         }
         else

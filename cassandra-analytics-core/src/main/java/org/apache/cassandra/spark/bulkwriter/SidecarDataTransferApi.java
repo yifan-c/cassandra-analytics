@@ -28,24 +28,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.sidecar.client.SidecarClient;
-import org.apache.cassandra.sidecar.client.SidecarInstanceImpl;
 import org.apache.cassandra.sidecar.client.request.ImportSSTableRequest;
 import org.apache.cassandra.sidecar.common.data.SSTableImportResponse;
 import org.apache.cassandra.spark.common.MD5Hash;
 import org.apache.cassandra.spark.common.client.ClientException;
 import org.apache.cassandra.spark.common.model.CassandraInstance;
 
+import static org.apache.cassandra.clients.Sidecar.toSidecarInstance;
+
 /**
- * A {@link DataTransferApi} implementation that interacts with Cassandra Sidecar
+ * A {@link DirectDataTransferApi} implementation that interacts with Cassandra Sidecar
  */
-public class SidecarDataTransferApi implements DataTransferApi
+public class SidecarDataTransferApi implements DirectDataTransferApi
 {
-    private static final long serialVersionUID = 2563347232666882754L;
     private static final Logger LOGGER = LoggerFactory.getLogger(SidecarDataTransferApi.class);
     private static final String SSTABLE_NAME_SEPARATOR = "-";
     private static final int SSTABLE_GENERATION_REVERSE_OFFSET = 3;
 
-    private final transient SidecarClient sidecarClient;
+    private final SidecarClient sidecarClient;
     private final JobInfo job;
     private final BulkSparkConf conf;
 
@@ -64,10 +64,10 @@ public class SidecarDataTransferApi implements DataTransferApi
                                        MD5Hash fileHash) throws ClientException
     {
         String componentName = updateComponentName(componentFile, ssTableIdx);
-        String uploadId = getUploadId(sessionID, job.getId().toString());
+        String uploadId = getUploadId(sessionID, job.getRestoreJobId().toString());
         try
         {
-            sidecarClient.uploadSSTableRequest(toSidecarInstance(instance), conf.keyspace, conf.table, uploadId,
+            sidecarClient.uploadSSTableRequest(toSidecarInstance(instance, conf), conf.keyspace, conf.table, uploadId,
                                                componentName, fileHash.toString(),
                                                componentFile.toAbsolutePath().toString()).get();
         }
@@ -90,19 +90,16 @@ public class SidecarDataTransferApi implements DataTransferApi
         {
             throw new UnsupportedOperationException("Only a single UUID is supported, you provided " + uuids.size());
         }
-        String uploadId = getUploadId(uuids.get(0), job.getId().toString());
+        String uploadId = getUploadId(uuids.get(0), job.getRestoreJobId().toString());
         ImportSSTableRequest.ImportOptions importOptions = new ImportSSTableRequest.ImportOptions();
 
-        if (job.validateSSTables())
-        {
-            importOptions.verifySSTables(true)
-                         .extendedVerify(!job.skipExtendedVerify());
-        }
+        importOptions.verifySSTables(true) // we disallow the end-user to bypass the non-extended verify anymore
+                     .extendedVerify(!job.skipExtendedVerify());
 
         try
         {
             SSTableImportResponse response =
-            sidecarClient.importSSTableRequest(toSidecarInstance(instance), conf.keyspace, conf.table, uploadId, importOptions).get();
+            sidecarClient.importSSTableRequest(toSidecarInstance(instance, conf), conf.keyspace, conf.table, uploadId, importOptions).get();
             if (response.success())
             {
                 return new RemoteCommitResult(response.success(), Collections.emptyList(), Collections.singletonList(uploadId), null);
@@ -121,7 +118,7 @@ public class SidecarDataTransferApi implements DataTransferApi
         String uploadId = getUploadId(sessionID, jobID);
         try
         {
-            sidecarClient.cleanUploadSession(toSidecarInstance(instance), uploadId).get();
+            sidecarClient.cleanUploadSession(toSidecarInstance(instance, conf), uploadId).get();
         }
         catch (ExecutionException | InterruptedException exception)
         {
@@ -144,10 +141,5 @@ public class SidecarDataTransferApi implements DataTransferApi
     protected String getUploadId(String sessionID, String jobId)
     {
         return sessionID + "-" + jobId;
-    }
-
-    private SidecarInstanceImpl toSidecarInstance(CassandraInstance instance)
-    {
-        return new SidecarInstanceImpl(instance.getNodeName(), conf.getSidecarPort());
     }
 }

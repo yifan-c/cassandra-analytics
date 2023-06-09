@@ -74,6 +74,16 @@ public final class RangeUtils
     }
 
     /**
+     * Check whether a range is open (exclusive) on its lower end and closed (inclusive) on its upper end.
+     * @param range range
+     * @return true if the range is open closed.
+     */
+    public static boolean isOpenClosedRange(Range<?> range)
+    {
+        return range.lowerBoundType() == BoundType.OPEN && range.upperBoundType() == BoundType.CLOSED;
+    }
+
+    /**
      * Splits the given range into equal sized small ranges. Number of splits can be controlled by
      * numberOfSplits. If numberOfSplits are smaller than size of the range, split size would be set to 1.
      *
