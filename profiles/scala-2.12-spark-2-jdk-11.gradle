@@ -18,14 +18,13 @@
  */
 
 ext {
-    jacksonVersion="2.6.7"
-    jacksonScalaModuleVersion="2.6.7.1"
-    scalaMajorVersion="2.11"
-    scalaVersion="2.11.12"
+    jacksonVersion="2.10.0"
+    scalaMajorVersion="2.12"
+    scalaVersion="2.12.10"
     sparkGroupId="org.apache.spark"
     sparkMajorVersion="2"
-    sparkVersion="2.4.8"
+    sparkVersion="2.4.8.9-apple"  // Apple-internal version with back-ported changes to support execution on JDK11
     sidecarClientGroup="org.apache.cassandra.sidecar"
     sidecarClientName="vertx-client-all"
-    sidecarVersion="1.0.0.20-aci-cassandra"
+    sidecarVersion="1.0.0.20-jdk8-aci-cassandra"
 }

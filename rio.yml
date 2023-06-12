@@ -1,0 +1,437 @@
+schemaVersion: '2.0'
+timeout: 30
+
+radar:
+  componentNames:
+    - ACI Cassandra Analytics
+
+machine:
+  env: &machineEnv
+    RUNTIME_JDK_VERSION: 11
+  # TODO: Do we still need the OEL 7 compatible image here?
+  # baseImage: docker.apple.com/base-images/oel7-isg/java11-builder:latest
+
+pipelines:
+  #######################
+  ##   PRB Pipelines   ##
+  #######################
+
+  - name: prb-cassandra-analytics-core-spark2-2.11-jdk8
+    branchName: apple
+    build:
+      template: buildozer:v4:prb
+    machine:
+      env:
+        RUNTIME_JDK_VERSION: "applejdk-8"
+        SPARK_VERSION: "2"
+        ORG_GRADLE_PROJECT_scala: "2.11"
+        JDK_VERSION: "1.8"
+    reports:
+      junit: true
+    jenkins:
+      concurrentBuild: true
+      maxConcurrentTotal: 16
+
+  - name: prb-cassandra-analytics-core-spark2-2.11-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:prb
+    machine:
+      env:
+        <<: *machineEnv
+        SPARK_VERSION: "2"
+        ORG_GRADLE_PROJECT_scala: "2.11"
+        JDK_VERSION: "11"
+    reports:
+      junit: true
+    jenkins:
+      concurrentBuild: true
+      maxConcurrentTotal: 16
+
+  - name: prb-cassandra-analytics-core-spark2-2.12-jdk8
+    branchName: apple
+    build:
+      template: buildozer:v4:prb
+    machine:
+      env:
+        RUNTIME_JDK_VERSION: "applejdk-8"
+        SPARK_VERSION: "2"
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        JDK_VERSION: "1.8"
+    reports:
+      junit: true
+    jenkins:
+      concurrentBuild: true
+      maxConcurrentTotal: 16
+
+  - name: prb-cassandra-analytics-core-spark2-2.12-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:prb
+    machine:
+      env:
+        <<: *machineEnv
+        SPARK_VERSION: "2"
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        JDK_VERSION: "11"
+    reports:
+      junit: true
+    jenkins:
+      concurrentBuild: true
+      maxConcurrentTotal: 16
+
+  - name: prb-cassandra-analytics-core-spark3-2.12-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:prb
+    machine:
+      env:
+        <<: *machineEnv
+        SPARK_VERSION: "3"
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        JDK_VERSION: "11"
+    reports:
+      junit: true
+    jenkins:
+      concurrentBuild: true
+      maxConcurrentTotal: 16
+
+  - name: prb-cassandra-analytics-core-spark3-2.13-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:prb
+    machine:
+      env:
+        <<: *machineEnv
+        SPARK_VERSION: "3"
+        ORG_GRADLE_PROJECT_scala: "2.13"
+        JDK_VERSION: "11"
+    reports:
+      junit: true
+    jenkins:
+      concurrentBuild: true
+      maxConcurrentTotal: 16
+
+  #######################
+  ## Develop Pipelines ##
+  #######################
+
+  - name: cassandra-analytics-core-2.11-jdk8
+    branchName: apple
+    build:
+      template: buildozer:v4:build
+    trigger:
+      gitPush: true
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        RUNTIME_JDK_VERSION: "applejdk-8"
+        ORG_GRADLE_PROJECT_scala: "2.11"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "1.8"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: false
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: cassandra-analytics-core-2.11-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:build
+    trigger:
+      gitPush: true
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.11"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: false
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: cassandra-analytics-core-2.12-jdk8
+    branchName: apple
+    build:
+      template: buildozer:v4:build
+    trigger:
+      gitPush: true
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        RUNTIME_JDK_VERSION: "applejdk-8"
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "1.8"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: false
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: cassandra-analytics-core-2.12-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:build
+    trigger:
+      gitPush: true
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: false
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: cassandra-analytics-core-2.12-spark3
+    branchName: apple
+    build:
+      template: buildozer:v4:build
+    trigger:
+      gitPush: true
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        SPARK_VERSION: "3"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: false
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: cassandra-analytics-core-2.13-spark3
+    branchName: apple
+    build:
+      template: buildozer:v4:build
+    trigger:
+      gitPush: true
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.13"
+        SPARK_VERSION: "3"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: false
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  #######################
+  ## Release Pipelines ##
+  #######################
+
+  - name: release-2.11-jdk8
+    branchName: apple
+    build:
+      template: buildozer:v4:publish
+    trigger:
+      gitPush: false
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        RUNTIME_JDK_VERSION: "applejdk-8"
+        ORG_GRADLE_PROJECT_scala: "2.11"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "1.8"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: true
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: release-2.11-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:publish
+    trigger:
+      gitPush: false
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.11"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: true
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: release-2.12-jdk8
+    branchName: apple
+    build:
+      template: buildozer:v4:publish
+    trigger:
+      gitPush: false
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        RUNTIME_JDK_VERSION: "applejdk-8"
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "1.8"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: true
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: release-2.12-jdk11
+    branchName: apple
+    build:
+      template: buildozer:v4:publish
+    trigger:
+      gitPush: false
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        SPARK_VERSION: "2"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: true
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: release-2.12-spark3
+    branchName: apple
+    build:
+      template: buildozer:v4:publish
+    trigger:
+      gitPush: false
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.12"
+        SPARK_VERSION: "3"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: true
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true
+
+  - name: release-2.13-spark3
+    branchName: apple
+    build:
+      template: buildozer:v4:publish
+    trigger:
+      gitPush: false
+    timeout: 40
+    machine:
+      env:
+        <<: *machineEnv
+        ORG_GRADLE_PROJECT_scala: "2.13"
+        SPARK_VERSION: "3"
+        JDK_VERSION: "11"
+        CODE_VERSION: $(./code_version.sh)
+        skipCheck: true
+    package:
+      release: true
+      libraries:
+        - publish:
+            - repo: m2:oss-patched
+    reports:
+      junit: true
+    finally:
+      radar:
+        annotate: true

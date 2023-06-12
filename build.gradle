@@ -87,7 +87,7 @@ tasks.register('buildIgnoreRatList', Exec) {
 //          '&& ' +
 //                            'git clean --force -d --dry-run -x | grep "Would skip" | cut -c 23-\n'
   doFirst {
-  // make sure the build directory exists so rat task can run independently
+    // make sure the build directory exists so rat task can run independently
     Files.createDirectories(buildDir)
     standardOutput new FileOutputStream(ratExcludeFilePath.toFile())
   }
@@ -136,6 +136,12 @@ rat {
 
   // XML, TXT and HTML reports directory, defaults to 'build/reports/rat'
   reportDir.set(file("build/reports/rat"))
+
+  // Apple internal files
+  excludes.add("RIO_PIPELINES.md")
+  excludes.add("code_version.sh")
+  excludes.add("rio.yml")
+
 }
 
 tasks.named('rat').configure {
