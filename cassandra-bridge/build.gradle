@@ -24,8 +24,6 @@ project(':cassandra-bridge') {
         compileOnly(group: "${sparkGroupId}", name: "spark-core_${scalaMajorVersion}", version: "${project.rootProject.sparkVersion}")
         compileOnly(group: "${sparkGroupId}", name: "spark-sql_${scalaMajorVersion}", version: "${project.rootProject.sparkVersion}")
 
-//        testImplementation(group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: "${jacksonDatabindVersion}")
-//        testImplementation(group: 'com.fasterxml.jackson.core', name: 'jackson-databind', version: "${jacksonCoreVersion}")
         testImplementation("com.fasterxml.jackson.module:jackson-module-scala_${scalaMajorVersion}:${jacksonScalaModuleVersion}")
         testImplementation(group: 'com.google.guava', name: 'guava', version: '31.1-jre')
         testImplementation(group: 'org.slf4j', name: 'slf4j-simple', version: '1.7.26')

@@ -47,8 +47,8 @@ import org.apache.cassandra.spark.reader.StreamScanner;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * SSTableWriter that expects the input data is already sorted
- *
+ * SSTableWriter that expects sorted data
+ * <br>
  * Note for implementor: the bulk writer always sort the data in entire spark partition before writing. One of the
  * benefit is that the output sstables are sorted and non-overlapping. It allows Cassandra to perform optimization
  * when importing those sstables, as they can be considered as a single large SSTable technically.

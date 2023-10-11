@@ -177,13 +177,6 @@ public class BlobStreamSession extends StreamSession<TransportContext.CloudStora
         }
     }
 
-    // It is created specifically for testing. Never use the method in prod
-    @VisibleForTesting
-    public void sendBundleUnsafe(Bundle bundle)
-    {
-        sendBundle(bundle, true);
-    }
-
     private StorageCredentials getStorageCredentialsFromSidecar()
     {
         RestoreJobSummaryResponsePayload summary;

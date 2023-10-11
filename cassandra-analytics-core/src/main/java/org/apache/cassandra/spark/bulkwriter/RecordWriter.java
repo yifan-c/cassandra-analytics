@@ -130,13 +130,22 @@ public class RecordWriter implements Serializable
     private void checkBatchSize(StreamSession<?> streamSession, JobInfo jobInfo, int partitionId, boolean isLast) throws IOException
     {
         // flush when any of the following condition is met
-        // 1) having collected enough rows (and using UNBUFFERED mode), or
+        // 1) having collected enough rows (when using UNBUFFERED mode), or
         // 2) reaching end of data
-        if ((jobInfo.getRowBufferMode() == RowBufferMode.UNBUFFERED && sstableWriter.rowCount() >= jobInfo.getSstableBatchSize())
-            || isLast)
+        if (isLast || hasRowCountReachedBatchSize(jobInfo))
         {
             flush(streamSession, partitionId, isLast);
         }
+    }
+
+    /**
+     * @param jobInfo job info
+     * @return true if having collected enough rows when using UNBUFFERED mode
+     */
+    private boolean hasRowCountReachedBatchSize(JobInfo jobInfo)
+    {
+        return jobInfo.getRowBufferMode() == RowBufferMode.UNBUFFERED
+               && sstableWriter.rowCount() >= jobInfo.getSstableBatchSize();
     }
 
     /**
@@ -237,12 +246,14 @@ public class RecordWriter implements Serializable
             this.delegate = delegate;
         }
 
+        @Override
         public boolean hasNext()
         {
             taskContext.killTaskIfInterrupted();
             return delegate.hasNext();
         }
 
+        @Override
         public T next()
         {
             return delegate.next();

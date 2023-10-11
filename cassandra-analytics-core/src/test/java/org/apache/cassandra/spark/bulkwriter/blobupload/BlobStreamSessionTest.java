@@ -33,7 +33,6 @@ import com.google.common.collect.BoundType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Range;
 import org.apache.commons.io.FileUtils;
-
 import org.junit.jupiter.api.Test;
 
 import com.apple.cassandra.data.CreateSliceRequestPayload;
@@ -132,7 +131,7 @@ public class BlobStreamSessionTest
             // test begins
             for (Bundle bundle : bundles)
             {
-                ss.sendBundleUnsafe(bundle);
+                ss.sendBundle(bundle, true);
             }
 
             assertEquals(bundles.size(), ss.createdRestoreSlices().size(),
