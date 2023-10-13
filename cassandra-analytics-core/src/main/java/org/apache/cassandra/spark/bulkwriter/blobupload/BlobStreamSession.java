@@ -219,7 +219,7 @@ public class BlobStreamSession extends StreamSession<TransportContext.CloudStora
         try
         {
             SidecarInstance sidecarInstance = Sidecar.toSidecarInstance(replica, transportContext.conf());
-            blobDataTransferApi.createRestoreSlice(sidecarInstance, slicePayload);
+            blobDataTransferApi.createRestoreSliceFromExecutor(sidecarInstance, slicePayload);
             return true;
         }
         catch (Exception exception)

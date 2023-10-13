@@ -209,8 +209,8 @@ public class BlobStreamSessionTest
         }
 
         @Override
-        public void createRestoreSlice(SidecarInstance sidecarInstance,
-                                       CreateSliceRequestPayload createSliceRequestPayload) throws ClientException
+        public void createRestoreSliceFromExecutor(SidecarInstance sidecarInstance,
+                                                   CreateSliceRequestPayload createSliceRequestPayload) throws ClientException
         {
             // the request is always successful
         }

@@ -43,8 +43,10 @@ import org.apache.cassandra.sidecar.client.exception.RetriesExhaustedException;
 import org.apache.cassandra.sidecar.client.request.Request;
 import org.apache.cassandra.sidecar.common.data.QualifiedTableName;
 import org.apache.cassandra.sidecar.common.data.RingEntry;
+import org.apache.cassandra.spark.bulkwriter.blobupload.BlobDataTransferApi;
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobStreamResult;
 import org.apache.cassandra.spark.bulkwriter.blobupload.CreatedRestoreSlice;
+import org.apache.cassandra.spark.bulkwriter.blobupload.StorageClient;
 import org.apache.cassandra.spark.bulkwriter.token.CassandraRing;
 import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
 import org.apache.cassandra.spark.data.ReplicationFactor;
@@ -55,7 +57,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -67,13 +72,12 @@ public class ImportCompletionCoordinatorTest
     CassandraRing<RingInstance> ring;
     JobInfo mockJobInfo;
     BulkSparkConf mockConf;
-    InternalSidecarClient mockSidecarClient;
+    BlobDataTransferApi dataTransferApi;
     UUID jobId;
 
     @BeforeEach
     public void setup() throws Exception
     {
-        mockSidecarClient = mock(InternalSidecarClient.class);
         mockJobInfo = mock(JobInfo.class);
         jobId = UUID.randomUUID();
         when(mockJobInfo.getRestoreJobId()).thenReturn(jobId);
@@ -99,19 +103,22 @@ public class ImportCompletionCoordinatorTest
                                                          ImmutableMap.of("replication_factor", 3)),
                                    allInstances);
         when(mockClusterInfo.getRing(anyBoolean())).thenReturn(ring);
-        when(mockCassandraContext.getSidecarClient()).thenReturn(mockSidecarClient);
         when(mockWriterContext.job()).thenReturn(mockJobInfo);
         when(mockWriterContext.conf()).thenReturn(mockConf);
         when(mockConf.getJobKeepAliveMinutes()).thenReturn(-1);
 
         writerValidator = new BulkWriteValidator(mockWriterContext, ignored -> { });
+
+        // clients will not be used in this test class; mock is at the API method level
+        BlobDataTransferApi api = new BlobDataTransferApi(mockJobInfo, mock(InternalSidecarClient.class), mock(StorageClient.class));
+        dataTransferApi = spy(api);
     }
 
     @Test
     public void testAwaitForCompletionWithNoErrors()
     {
         List<BlobStreamResult> resultList = buildBlobStreamResult(0, false);
-        ImportCompletionCoordinator.of(mockWriterContext, writerValidator, resultList).waitForCompletion();
+        ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
         validateAllSlicesWereCalled(resultList);
     }
 
@@ -119,7 +126,7 @@ public class ImportCompletionCoordinatorTest
     public void testAwaitForCompletionWithNoErrorsAndSlowImport()
     {
         List<BlobStreamResult> resultList = buildBlobStreamResult(0, true);
-        ImportCompletionCoordinator.of(mockWriterContext, writerValidator, resultList).waitForCompletion();
+        ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
         validateAllSlicesWereCalled(resultList);
     }
 
@@ -128,7 +135,7 @@ public class ImportCompletionCoordinatorTest
     {
         // There is 1 failure in each replica set. 2 out of 3 replicas succeeds.
         List<BlobStreamResult> resultList = buildBlobStreamResult(1, false);
-        ImportCompletionCoordinator.of(mockWriterContext, writerValidator, resultList).waitForCompletion();
+        ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
         validateAllSlicesWereCalled(resultList);
     }
 
@@ -140,7 +147,7 @@ public class ImportCompletionCoordinatorTest
         List<BlobStreamResult> resultList = buildBlobStreamResult(2, false);
         try
         {
-            ImportCompletionCoordinator.of(mockWriterContext, writerValidator, resultList).waitForCompletion();
+            ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
         }
         catch (RuntimeException exception)
         {
@@ -173,35 +180,29 @@ public class ImportCompletionCoordinatorTest
                 if (simulateSlowImport && i == totalInstances - 1)
                 {
                     // only add slowness for the last import
-                    when(mockSidecarClient.createRestoreJobSlice(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
-                                                                 eq("testkeyspace"),
-                                                                 eq("testtable"),
-                                                                 eq(jobId),
-                                                                 eq(mockCreateSliceRequestPayload)))
-                    .thenAnswer((Answer<CompletableFuture<Void>>) invocation -> {
+                    doAnswer((Answer<CompletableFuture<Void>>) invocation -> {
                         Thread.sleep(ThreadLocalRandom.current().nextInt(2000));
                         return CompletableFuture.completedFuture(null);
-                    });
+                    })
+                    .when(dataTransferApi)
+                    .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
+                                                  eq(mockCreateSliceRequestPayload));
                 }
                 else if (failedPerReplica-- > 0)
                 {
                     CompletableFuture<Void> future = new CompletableFuture<>();
                     future.completeExceptionally(RetriesExhaustedException.of(10, mock(Request.class), null));
-                    when(mockSidecarClient.createRestoreJobSlice(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
-                                                                 eq("testkeyspace"),
-                                                                 eq("testtable"),
-                                                                 eq(jobId),
-                                                                 eq(mockCreateSliceRequestPayload)))
-                    .thenReturn(future);
+                    doReturn(future)
+                    .when(dataTransferApi)
+                    .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
+                                                  eq(mockCreateSliceRequestPayload));
                 }
                 else
                 {
-                    when(mockSidecarClient.createRestoreJobSlice(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
-                                                                 eq("testkeyspace"),
-                                                                 eq("testtable"),
-                                                                 eq(jobId),
-                                                                 eq(mockCreateSliceRequestPayload)))
-                    .thenReturn(CompletableFuture.completedFuture(null));
+                    doReturn(CompletableFuture.completedFuture(null))
+                    .when(dataTransferApi)
+                    .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
+                                                  eq(mockCreateSliceRequestPayload));
                 }
             }
             BlobStreamResult result = new BlobStreamResult("", mock(Range.class), Collections.emptyList(),
@@ -219,12 +220,9 @@ public class ImportCompletionCoordinatorTest
             {
                 for (CreatedRestoreSlice createdRestoreSlice : blobStreamResult.createdRestoreSlices)
                 {
-                    verify(mockSidecarClient, times(1))
-                    .createRestoreJobSlice(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
-                                           eq("testkeyspace"),
-                                           eq("testtable"),
-                                           eq(jobId),
-                                           eq(createdRestoreSlice.sliceRequestPayload()));
+                    verify(dataTransferApi, times(1))
+                    .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
+                                                  eq(createdRestoreSlice.sliceRequestPayload()));
                 }
             }
         }

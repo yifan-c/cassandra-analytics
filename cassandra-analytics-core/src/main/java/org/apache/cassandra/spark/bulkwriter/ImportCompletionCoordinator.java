@@ -22,7 +22,6 @@ package org.apache.cassandra.spark.bulkwriter;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import com.google.common.collect.Range;
@@ -30,9 +29,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.apple.cassandra.data.CreateSliceRequestPayload;
-import com.apple.cassandra.sidecarclient.InternalSidecarClient;
 import org.apache.cassandra.sidecar.client.SidecarInstance;
-import org.apache.cassandra.sidecar.common.data.QualifiedTableName;
+import org.apache.cassandra.spark.bulkwriter.blobupload.BlobDataTransferApi;
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobStreamResult;
 import org.apache.cassandra.spark.bulkwriter.blobupload.CreatedRestoreSlice;
 
@@ -42,21 +40,25 @@ public final class ImportCompletionCoordinator
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(ImportCompletionCoordinator.class);
     private final BulkWriterContext writerContext;
+    private final BlobDataTransferApi dataTransferApi;
     private final BulkWriteValidator writeValidator;
     private final List<BlobStreamResult> blobStreamResultList;
 
-    private ImportCompletionCoordinator(BulkWriterContext writerContext, BulkWriteValidator writeValidator, List<BlobStreamResult> blobStreamResultList)
+    private ImportCompletionCoordinator(BulkWriterContext writerContext, BlobDataTransferApi dataTransferApi,
+                                        BulkWriteValidator writeValidator, List<BlobStreamResult> blobStreamResultList)
     {
         this.writerContext = writerContext;
+        this.dataTransferApi = dataTransferApi;
         this.writeValidator = writeValidator;
         this.blobStreamResultList = blobStreamResultList;
     }
 
     public static ImportCompletionCoordinator of(BulkWriterContext writerContext,
+                                                 BlobDataTransferApi dataTransferApi,
                                                  BulkWriteValidator writeValidator,
                                                  List<BlobStreamResult> resultsAsBlobStreamResults)
     {
-        return new ImportCompletionCoordinator(writerContext, writeValidator, resultsAsBlobStreamResults);
+        return new ImportCompletionCoordinator(writerContext, dataTransferApi, writeValidator, resultsAsBlobStreamResults);
     }
 
     /**
@@ -72,9 +74,6 @@ public final class ImportCompletionCoordinator
     public void waitForCompletion()
     {
         writeValidator.setPhase("WaitForCommitCompletion");
-        InternalSidecarClient sidecarClient = (InternalSidecarClient) writerContext.cluster().getCassandraContext().getSidecarClient();
-        QualifiedTableName table = writerContext.job().getQualifiedTableName();
-        UUID jobId = writerContext.job().getRestoreJobId();
         BulkSparkConf conf = writerContext.conf();
         List<CompletableFuture<?>> results = new ArrayList<>();
         for (BlobStreamResult blobStreamResult : blobStreamResultList)
@@ -85,11 +84,8 @@ public final class ImportCompletionCoordinator
                 for (CreatedRestoreSlice createdRestoreSlice : blobStreamResult.createdRestoreSlices)
                 {
                     CreateSliceRequestPayload createSliceRequestPayload = createdRestoreSlice.sliceRequestPayload();
-                    results.add(sidecarClient.createRestoreJobSlice(sidecarInstance,
-                                                                    table.keyspace(),
-                                                                    table.tableName(),
-                                                                    jobId,
-                                                                    createSliceRequestPayload)
+                    results.add(dataTransferApi.createRestoreSliceFromDriver(sidecarInstance,
+                                                                             createSliceRequestPayload)
                                              .exceptionally(throwable -> {
                                                  LOGGER.error("Failed to import. slice={} instance={}",
                                                               createSliceRequestPayload, sidecarInstance, throwable);

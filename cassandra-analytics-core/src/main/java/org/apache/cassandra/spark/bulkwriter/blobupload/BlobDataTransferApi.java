@@ -32,6 +32,7 @@ import com.apple.cassandra.sidecarclient.InternalSidecarClient;
 import com.apple.cassandra.sidecarclient.request.CreateRestoreJobSliceRequest;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import org.apache.cassandra.sidecar.client.HttpResponse;
+import org.apache.cassandra.sidecar.client.HttpResponseImpl;
 import org.apache.cassandra.sidecar.client.SidecarClient;
 import org.apache.cassandra.sidecar.client.SidecarInstance;
 import org.apache.cassandra.sidecar.client.request.Request;
@@ -118,28 +119,20 @@ public class BlobDataTransferApi
     }
 
     /**
-     * Called from task level to create a restore slice with custom retry policy
+     * Called from task level to create a restore slice.
+     * The request retries until the slice is created (201) or retry has exhausted.
      *
      * @param sidecarInstance           the sidecar instance where we will create the slice
      * @param createSliceRequestPayload the payload to create the slice
      * @throws ClientException when an error occurs during the slice creation
      */
-    public void createRestoreSlice(SidecarInstance sidecarInstance,
-                                   CreateSliceRequestPayload createSliceRequestPayload) throws ClientException
+    public void createRestoreSliceFromExecutor(SidecarInstance sidecarInstance,
+                                               CreateSliceRequestPayload createSliceRequestPayload) throws ClientException
     {
         try
         {
-            QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
-            CreateRestoreJobSliceRequest request = new CreateRestoreJobSliceRequest(qualifiedTableName.keyspace(),
-                                                                                    qualifiedTableName.tableName(),
-                                                                                    jobInfo.getRestoreJobId(),
-                                                                                    createSliceRequestPayload);
-            sidecarClient.executeRequestAsync(sidecarClient.requestBuilder()
-                                                           .retryPolicy(new CustomRetryPolicyForCreateSlice())
-                                                           .singleInstanceSelectionPolicy(sidecarInstance)
-                                                           .request(request)
-                                                           .build())
-                         .get();
+            createRestoreSlice(sidecarInstance, createSliceRequestPayload, new ExecutorCreateSliceRetryPolicy())
+            .get();
         }
         catch (ExecutionException | InterruptedException exception)
         {
@@ -147,6 +140,39 @@ public class BlobDataTransferApi
             throw new ClientException("Failed to create restore slice for payload: " + createSliceRequestPayload,
                                       exception);
         }
+    }
+
+    /**
+     * Called from driver level to create a restore slice asynchronously.
+     * The request retries until the slice succeeds (200), failed (550) or retry has exhausted.
+     *
+     * @param sidecarInstance           the sidecar instance where we will create the slice
+     * @param createSliceRequestPayload the payload to create the slice
+     */
+    public CompletableFuture<Void> createRestoreSliceFromDriver(SidecarInstance sidecarInstance,
+                                                                CreateSliceRequestPayload createSliceRequestPayload)
+    {
+        return createRestoreSlice(sidecarInstance, createSliceRequestPayload,
+                                  new DriverCreateSliceRetryPolicy(sidecarClient.defaultRetryPolicy()));
+    }
+
+    /**
+     * Create a restore slice with custom retry policy
+     */
+    private CompletableFuture<Void> createRestoreSlice(SidecarInstance sidecarInstance,
+                                    CreateSliceRequestPayload createSliceRequestPayload,
+                                    RetryPolicy retryPolicy)
+    {
+        QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
+        CreateRestoreJobSliceRequest request = new CreateRestoreJobSliceRequest(qualifiedTableName.keyspace(),
+                                                                                qualifiedTableName.tableName(),
+                                                                                jobInfo.getRestoreJobId(),
+                                                                                createSliceRequestPayload);
+        return sidecarClient.executeRequestAsync(sidecarClient.requestBuilder()
+                                                              .retryPolicy(retryPolicy)
+                                                              .singleInstanceSelectionPolicy(sidecarInstance)
+                                                              .request(request)
+                                                              .build());
     }
 
     public void updateRestoreJob(UpdateRestoreJobRequestPayload updateRestoreJobRequestPayload) throws ClientException
@@ -184,9 +210,9 @@ public class BlobDataTransferApi
 
     /**
      * {@link SidecarClient} by default retries till 200 Http response. But for create slice endpoint at task level,
-     * we want to wait only till 201 Http response. Hence using a custom retry policy
+     * we want to wait only till 201 Http response, hence using a custom retry policy
      */
-    class CustomRetryPolicyForCreateSlice extends RetryPolicy
+    class ExecutorCreateSliceRetryPolicy extends RetryPolicy
     {
         @Override
         public void onResponse(CompletableFuture<HttpResponse> completableFuture,
@@ -202,6 +228,45 @@ public class BlobDataTransferApi
                 sidecarClient.defaultRetryPolicy().onResponse(completableFuture, request, httpResponse,
                                                               throwable, attempts, canRetryOnADifferentHost,
                                                               retryAction);
+            }
+        }
+    }
+
+    /**
+     * Retry when server return CREATED 201. Besides that, its behavior is the same as what the default does.
+     */
+    class DriverCreateSliceRetryPolicy extends RetryPolicy
+    {
+        private final RetryPolicy delegate;
+
+        DriverCreateSliceRetryPolicy(RetryPolicy delegate)
+        {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void onResponse(CompletableFuture<HttpResponse> completableFuture,
+                               Request request, HttpResponse httpResponse, Throwable throwable,
+                               int attempts, boolean canRetryOnADifferentHost, RetryAction retryAction)
+        {
+            if (httpResponse != null && httpResponse.statusCode() == HttpResponseStatus.CREATED.code())
+            {
+                // This is very hacky due to sidecar client is not open to modification!
+                // ACCEPTED will trigger a special retry, which is wanted here.
+                // Therefore, fake a http response by setting the status code to ACCEPTED
+                HttpResponse fakeResponseForRetry =  new HttpResponseImpl(HttpResponseStatus.ACCEPTED.code(),
+                                                                          httpResponse.statusMessage(),
+                                                                          httpResponse.headers(),
+                                                                          httpResponse.sidecarInstance());
+                delegate.onResponse(completableFuture, request, fakeResponseForRetry,
+                                    throwable, attempts, canRetryOnADifferentHost,
+                                    retryAction);
+            }
+            else
+            {
+                delegate.onResponse(completableFuture, request, httpResponse,
+                                    throwable, attempts, canRetryOnADifferentHost,
+                                    retryAction);
             }
         }
     }

@@ -186,7 +186,8 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                 // Unpersist broadcast context to free up executors while driver waits for the
                 // import to complete
                 unpersist();
-                ImportCompletionCoordinator.of(writerContext, writeValidator, resultsAsBlobStreamResults)
+                ImportCompletionCoordinator.of(writerContext, context.dataTransferApi(),
+                                               writeValidator, resultsAsBlobStreamResults)
                                            .waitForCompletion();
                 markRestoreJobAsSucceeded(context);
             });
