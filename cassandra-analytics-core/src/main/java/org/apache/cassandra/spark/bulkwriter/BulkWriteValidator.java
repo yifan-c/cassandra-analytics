@@ -51,7 +51,8 @@ public class BulkWriteValidator implements AutoCloseable
         cluster = bulkWriterContext.cluster();
         job = bulkWriterContext.job();
         failureHandler = new ReplicaAwareFailureHandler<>(cluster.getRing(true));
-        monitor = new CassandraRingMonitor(cluster, cancelJobFunc, 1000, TimeUnit.MILLISECONDS);
+        monitor = new CassandraRingMonitor(cluster, cancelJobFunc, 1000, TimeUnit.MILLISECONDS,
+                                           bulkWriterContext.conf().getRingRetryCount());
     }
 
     public void setPhase(String phase)

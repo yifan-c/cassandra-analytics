@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -67,6 +68,8 @@ public class CassandraClusterInfo implements ClusterInfo
     protected transient CassandraContext cassandraContext;
     protected final transient AtomicReference<NodeSettings> nodeSettings;
     protected final transient List<CompletableFuture<NodeSettings>> allNodeSettingFutures;
+
+    private volatile boolean isClosed = false;
 
     public CassandraClusterInfo(BulkSparkConf conf)
     {
@@ -161,6 +164,7 @@ public class CassandraClusterInfo implements ClusterInfo
         synchronized (this)
         {
             LOGGER.info("Closing {}", this);
+            isClosed = true;
             getCassandraContext().close();
         }
     }
@@ -288,6 +292,12 @@ public class CassandraClusterInfo implements ClusterInfo
     @Override
     public CassandraRing<RingInstance> getRing(boolean cached)
     {
+        // Prevent returning cached or make request for ring info if the cluster info is closed
+        if (isClosed)
+        {
+            throw new RejectedExecutionException("ClusterInfo has been closed");
+        }
+
         CassandraRing<RingInstance> currentRing = ring;
         if (cached && currentRing != null)
         {

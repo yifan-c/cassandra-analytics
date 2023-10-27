@@ -46,10 +46,10 @@ public class MockScheduledExecutorService extends ScheduledThreadPoolExecutor
 
     @NotNull
     @Override
-    public ScheduledFuture<?> scheduleAtFixedRate(@NotNull Runnable command,
-                                                  long initialDelay,
-                                                  long period,
-                                                  @NotNull TimeUnit unit)
+    public ScheduledFuture<?> scheduleWithFixedDelay(@NotNull Runnable command,
+                                                     long initialDelay,
+                                                     long period,
+                                                     @NotNull TimeUnit unit)
     {
         this.period = period;
         this.timeUnit = unit;

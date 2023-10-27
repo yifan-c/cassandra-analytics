@@ -52,7 +52,8 @@ public class CassandraRingMonitorTest
                                                             event -> changeCount++,
                                                             1,
                                                             TimeUnit.SECONDS,
-                                                            executorService);
+                                                            executorService,
+                                                            3);
         // Make no changes to the ring and call again
         executorService.runCommand();
         assertEquals(0, changeCount);
@@ -66,7 +67,8 @@ public class CassandraRingMonitorTest
                                                             event -> changeCount++,
                                                             1,
                                                             TimeUnit.SECONDS,
-                                                            executorService);
+                                                            executorService,
+                                                            3);
         // Make no changes to the ring and call again
         executorService.runCommand();
         assertEquals(0, changeCount);
@@ -87,7 +89,8 @@ public class CassandraRingMonitorTest
                                                             event -> changeCount++,
                                                             1,
                                                             TimeUnit.SECONDS,
-                                                            executorService);
+                                                            executorService,
+                                                            3);
         crm.stop();
         assertTrue(executorService.isStopped());
     }
@@ -99,7 +102,8 @@ public class CassandraRingMonitorTest
                                                             event -> changeCount++,
                                                             10,
                                                             TimeUnit.HOURS,
-                                                            executorService);
+                                                            executorService,
+                                                            3);
         crm.stop();
         assertEquals(10, executorService.getPeriod());
         assertEquals(TimeUnit.HOURS, executorService.getTimeUnit());
@@ -112,7 +116,8 @@ public class CassandraRingMonitorTest
                                                             event -> changeCount++,
                                                             1,
                                                             TimeUnit.SECONDS,
-                                                            executorService);
+                                                            executorService,
+                                                            3);
         // Make no changes to the ring and call again
         executorService.runCommand();
         assertEquals(0, changeCount);

@@ -23,6 +23,7 @@ import java.math.BigInteger;
 import java.util.Collection;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -35,7 +36,6 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.spark.bulkwriter.token.CassandraRing;
 import org.apache.cassandra.spark.bulkwriter.util.ThreadUtil;
-import org.apache.cassandra.spark.common.client.ClientException;
 
 public class CassandraRingMonitor
 {
@@ -46,17 +46,21 @@ public class CassandraRingMonitor
     private Callable<CassandraRing<RingInstance>> ringSupplier;
     private Consumer<CancelJobEvent> changeFunc;
     private final ScheduledExecutorService executorService;
+    private final int ringMaxConsecutiveRetryCount;
+    private int retryCount = 0;
 
     public CassandraRingMonitor(ClusterInfo clusterInfo,
                                 Consumer<CancelJobEvent> changeFunc,
                                 int checkInterval,
-                                TimeUnit checkIntervalUnit) throws Exception
+                                TimeUnit checkIntervalUnit,
+                                int ringMaxConsecutiveRetryCount) throws Exception
     {
         this(() -> clusterInfo.getRing(false),
              changeFunc,
              checkInterval,
              checkIntervalUnit,
-             Executors.newSingleThreadScheduledExecutor(ThreadUtil.threadFactory("Cassandra Ring Monitor")));
+             Executors.newSingleThreadScheduledExecutor(ThreadUtil.threadFactory("Cassandra Ring Monitor")),
+             ringMaxConsecutiveRetryCount);
     }
 
     @VisibleForTesting
@@ -64,13 +68,16 @@ public class CassandraRingMonitor
                                 Consumer<CancelJobEvent> changeFunc,
                                 int checkInterval,
                                 TimeUnit checkIntervalUnit,
-                                ScheduledExecutorService executorService) throws Exception
+                                ScheduledExecutorService executorService,
+                                int ringMaxConsecutiveRetryCount) throws Exception
     {
         this.ringSupplier = ringSupplier;
         this.initialRing = ringSupplier.call();
         this.changeFunc = changeFunc;
         this.executorService = executorService;
-        executorService.scheduleAtFixedRate(this::checkRingChanged, 0, checkInterval, checkIntervalUnit);
+        this.ringMaxConsecutiveRetryCount = ringMaxConsecutiveRetryCount;
+        // A slow run could take longer time than checkInterval. Schedule with fixed delay to avoid overlapping runs.
+        executorService.scheduleWithFixedDelay(this::checkRingChanged, 0, checkInterval, checkIntervalUnit);
     }
 
     /**
@@ -108,19 +115,28 @@ public class CassandraRingMonitor
             {
                 ringChanged = true;
                 changeFunc.accept(new CancelJobEvent("Ring changed during bulk load"));
-                executorService.shutdownNow();
+                stop();
             }
+            retryCount = 0;
         }
-        catch (ClientException exception)
+        catch (RejectedExecutionException rejectedExecutionException)
         {
-            LOGGER.warn("Could not retrieve current ring. Will retry momentarily. Continuing bulk load.", exception);
+            LOGGER.warn("Ring supplier is closed and rejected the call. Stopping CassandraRingMonitor",
+                        rejectedExecutionException);
+            stop();
         }
         catch (Exception exception)
         {
-            String message = "Error while attempting to determine if ring changed. Failing job";
-            LOGGER.error(message, exception);
-            changeFunc.accept(new CancelJobEvent(message, exception));
-            executorService.shutdownNow();
+            if (retryCount++ > ringMaxConsecutiveRetryCount)
+            {
+                LOGGER.error("Could not retrieve current ring. All hosts exhausted. The retrieval has failed consecutive for {} times", retryCount);
+                changeFunc.accept(new CancelJobEvent("Could not retrieve current ring. All hosts and retry have exhausted."));
+                stop();
+            }
+            else
+            {
+                LOGGER.warn("Could not retrieve current ring. Will retry momentarily. Continuing bulk load.", exception);
+            }
         }
     }
 

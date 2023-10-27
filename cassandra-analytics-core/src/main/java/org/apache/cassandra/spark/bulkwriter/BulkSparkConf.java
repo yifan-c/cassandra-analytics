@@ -81,7 +81,9 @@ public class BulkSparkConf implements Serializable
     public static final long DEFAULT_SIDECAR_REQUEST_RETRY_DELAY_SECONDS = 1L;
     public static final long DEFAULT_SIDECAR_REQUEST_MAX_RETRY_DELAY_SECONDS = 60L;
     public static final int DEFAULT_COMMIT_BATCH_SIZE = 10_000;
-    public static final int DEFAULT_RING_RETRY_COUNT = 3;
+    // Analytics-internal property. Assume each run takes 2 seconds, the default value of 120 takes roughly 4 minutes,
+    // which is hopefully enough time to recover from network connectivity issue to the cluster.
+    public static final int DEFAULT_RING_RETRY_COUNT = 120;
     public static final RowBufferMode DEFAULT_ROW_BUFFER_MODE = RowBufferMode.UNBUFFERED;
     public static final int DEFAULT_BATCH_SIZE_IN_ROWS = 1_000_000;
     public static final long DEFAULT_STORAGE_CLIENT_KEEP_ALIVE_SECONDS = 60;
@@ -103,6 +105,7 @@ public class BulkSparkConf implements Serializable
     public static final String SIDECAR_REQUEST_MAX_RETRY_DELAY_SECONDS = SETTING_PREFIX + "sidecar.request.retries.max.delay.seconds";
     public static final String SKIP_CLEAN                              = SETTING_PREFIX + "job.skip_clean";
     public static final String USE_OPENSSL                             = SETTING_PREFIX + "use_openssl";
+    // defines the max number of consecutive retries allowed in the ring monitor
     public static final String RING_RETRY_COUNT                        = SETTING_PREFIX + "ring_retry_count";
     public static final int MINIMUM_JOB_KEEP_ALIVE_MINUTES             = 10;
 
