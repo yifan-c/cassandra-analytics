@@ -26,6 +26,12 @@ package org.apache.cassandra.spark.transports.storage.extensions;
 interface DriverStorageTransportExtension
 {
     /**
+     * Notifies the extension that data transport has been started. This method will be called from the driver.
+     * @param elapsedMillis the elapsed time from the start of the bulk write run until this step for the job in milliseconds
+     */
+    void onTransportStart(long elapsedMillis);
+
+    /**
      * Sets the {@link CredentialChangeListener} to listen for token changes. This method
      * will be called from the driver.
      *
@@ -42,28 +48,41 @@ interface DriverStorageTransportExtension
     void setObjectFailureListener(ObjectFailureListener objectFailureListener);
 
     /**
-     * Notifies the interface that all the objects have been persisted to the blob store successfully.
+     * Notifies the extension that all the objects have been persisted to the blob store successfully.
      * This method is called from driver when all executor tasks complete.
      *
      * @param objectsCount the total count of objects persisted
      * @param rowCount the total count of rows persisted
-     * @param elapsedMillis the elapsed time until this step for the job in milliseconds
+     * @param elapsedMillis the elapsed time from the start of the bulk write run until this step for the job in milliseconds
      */
     void onAllObjectsPersisted(long objectsCount, long rowCount, long elapsedMillis);
 
     /**
-     * Notifies the interface that the job has completed successfully. This method will be called
+     * Notifies the extension that the object identified by the bucket and key has been applied, meaning
+     * the SSTables included in the object is imported into Cassandra and satisfies the desired consistency level.
+     * <br>
+     * The notification is only emitted once per object and as soon as the consistency level is satisfied.
+     *
+     * @param bucket the belonging bucket of the object
+     * @param key the object key
+     * @param sizeInBytes the size of the object in bytes
+     * @param elapsedMillis the elapsed time from the start of the bulk write run until this step for the job in milliseconds
+     */
+    void onObjectApplied(String bucket, String key, long sizeInBytes, long elapsedMillis);
+
+    /**
+     * Notifies the extension that the job has completed successfully. This method will be called
      * from the driver at the end of the Spark Bulk Writer execution when the job succeeds.
      *
-     * @param elapsedMillis the elapsed time for the job in milliseconds
+     * @param elapsedMillis the elapsed time from the start of the bulk write run until this step for the job in milliseconds
      */
     void onJobSucceeded(long elapsedMillis);
 
     /**
-     * Notifies the interface that the job has failed with exception {@link Throwable throwable}.
+     * Notifies the extension that the job has failed with exception {@link Throwable throwable}.
      * This method will be called from the driver at the end of the Spark Bulk Writer execution when the job fails.
      *
-     * @param elapsedMillis the elapsed time for the job in milliseconds
+     * @param elapsedMillis the elapsed time from the start of the bulk write run until this step for the job in milliseconds
      * @param throwable     the exception encountered by the job
      */
     void onJobFailed(long elapsedMillis, Throwable throwable);

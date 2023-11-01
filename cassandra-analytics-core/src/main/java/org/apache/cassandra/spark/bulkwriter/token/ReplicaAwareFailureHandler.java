@@ -114,7 +114,7 @@ public class ReplicaAwareFailureHandler<Instance extends CassandraInstance>
             Collection<Instance> failedInstances = errorMap.keySet().stream()
                     .filter(instance -> !errorMap.get(instance).isEmpty())
                     .collect(Collectors.toList());
-            if (!consistencyLevel.checkConsistency(failedInstances, ring.getReplicationFactor(), localDC))
+            if (consistencyLevel.hasDefinitivelyFailed(failedInstances, ring.getReplicationFactor(), localDC))
             {
                 failedEntries.add(new AbstractMap.SimpleEntry<>(failedRangeEntry.getKey(), failedRangeEntry.getValue()));
             }

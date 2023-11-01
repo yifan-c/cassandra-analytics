@@ -20,7 +20,9 @@
 package org.apache.cassandra.spark.bulkwriter.blobupload;
 
 import java.io.Serializable;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,6 +30,9 @@ import org.slf4j.LoggerFactory;
 import com.apple.cassandra.data.CreateSliceRequestPayload;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
+import org.apache.cassandra.spark.common.model.CassandraInstance;
+import org.apache.cassandra.spark.data.ReplicationFactor;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -40,6 +45,8 @@ public class CreatedRestoreSlice implements Serializable
     private static final long serialVersionUID = 1738928448022537598L;
 
     private transient CreateSliceRequestPayload sliceRequestPayload;
+    private transient Set<CassandraInstance> succeededInstances;
+    private transient boolean isSatisfied = false;
     private final String sliceRequestPayloadJson; // equals and hashcode use and only implement with this field
 
     public CreatedRestoreSlice(@NotNull CreateSliceRequestPayload sliceRequestPayload)
@@ -73,6 +80,41 @@ public class CreatedRestoreSlice implements Serializable
                          sliceRequestPayloadJson, exception);
             throw new RuntimeException("Unable to deserialize CreateSliceRequestPayload from JSON", exception);
         }
+    }
+
+    public synchronized void addSucceededInstance(CassandraInstance instance)
+    {
+        if (succeededInstances == null)
+        {
+            succeededInstances = new HashSet<>();
+        }
+        succeededInstances.add(instance);
+    }
+
+    /**
+     * Check whether the slice satisfies the consistency level
+     * @param consistencyLevel consistency level to check
+     * @param replicationFactor replicaton factor to check
+     * @param localDC local DC name if any
+     * @return check result, either not satisfied, satisfied, or already satisfied
+     */
+    public synchronized ConsistencyLevelCheckResult checkForConsistencyLevel(ConsistencyLevel consistencyLevel,
+                                                                             ReplicationFactor replicationFactor,
+                                                                             String localDC)
+    {
+        if (isSatisfied)
+        {
+            return ConsistencyLevelCheckResult.ALREADY_SATISFIED;
+        }
+
+
+        if (consistencyLevel.hasDefinitivelySatisfied(succeededInstances, replicationFactor, localDC))
+        {
+            isSatisfied = true;
+            return ConsistencyLevelCheckResult.SATISFIED;
+        }
+
+        return ConsistencyLevelCheckResult.NOT_SATISFIED;
     }
 
     public boolean equals(Object o)
@@ -111,5 +153,12 @@ public class CreatedRestoreSlice implements Serializable
                          sliceRequestPayload, jsonProcessingException);
             throw new RuntimeException("Unable to serialize CreateSliceRequestPayload to JSON", jsonProcessingException);
         }
+    }
+
+    public enum ConsistencyLevelCheckResult
+    {
+        NOT_SATISFIED,
+        SATISFIED,
+        ALREADY_SATISFIED;
     }
 }

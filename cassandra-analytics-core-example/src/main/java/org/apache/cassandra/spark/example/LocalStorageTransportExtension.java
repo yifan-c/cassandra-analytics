@@ -59,6 +59,12 @@ public class LocalStorageTransportExtension implements StorageTransportExtension
     }
 
     @Override
+    public void onTransportStart(long elapsedMillis)
+    {
+
+    }
+
+    @Override
     public void setCredentialChangeListener(CredentialChangeListener credentialChangeListener)
     {
     }
@@ -79,6 +85,12 @@ public class LocalStorageTransportExtension implements StorageTransportExtension
     {
         LOGGER.info("All {} objects, totaling {} rows, are persisted with elapsed time {}ms",
                     objectsCount, rowCount, elapsedMillis);
+    }
+
+    @Override
+    public void onObjectApplied(String bucket, String key, long sizeInBytes, long elapsedMillis)
+    {
+
     }
 
     @Override

@@ -41,13 +41,12 @@ import org.apache.cassandra.spark.bulkwriter.blobupload.SSTableCollector.SSTable
  * list of {@link SSTableFilesAndRange}. According to sorted order, we move all component files
  * related to a SSTable into bundle folder. When a bundle's size exceeds configured, a new bundle is created and
  * SSTable components are moved into new bundle folder.
- * <p>
+ * <br>
  * When a bundle is being closed, {@link Bundle} generated for that bundle gets written to manifest.json file
  * and added to bundle folder. The entire folder is then zipped and added to zipped_bundles folder
- * <p>
+ * <br>
  * Under output directory of {@link org.apache.cassandra.bridge.SSTableWriter}, sample folders created look like
  * bundle0, bundle1, bundle2, zipped_bundles
- * <p>
  */
 public class SSTablesBundler implements Iterator<Bundle>
 {

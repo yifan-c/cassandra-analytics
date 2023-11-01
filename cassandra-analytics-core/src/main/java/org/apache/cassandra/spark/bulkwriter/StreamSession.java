@@ -150,7 +150,7 @@ public abstract class StreamSession<T extends TransportContext>
      * Close the stream session
      * @return stream result
      * @throws ExecutionException execution exception during streaming
-     * @throws InterruptedException
+     * @throws InterruptedException thread interruption
      */
     public abstract StreamResult close() throws ExecutionException, InterruptedException;
 }

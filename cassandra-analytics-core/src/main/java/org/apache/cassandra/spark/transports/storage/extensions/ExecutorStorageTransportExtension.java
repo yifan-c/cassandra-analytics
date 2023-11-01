@@ -26,7 +26,7 @@ package org.apache.cassandra.spark.transports.storage.extensions;
 interface ExecutorStorageTransportExtension
 {
     /**
-     * Notifies the interface that the {@code objectURI} has been successfully persisted to the blob store.
+     * Notifies the extension that the {@code objectURI} has been successfully persisted to the blob store.
      * This method will be called from each task during the job execution.
      *
      * @param bucket   the bucket to which the file was written

@@ -32,7 +32,9 @@ import com.google.common.collect.Range;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.spark.bulkwriter.token.CassandraRing;
 import org.apache.cassandra.spark.bulkwriter.token.ReplicaAwareFailureHandler;
+import org.apache.cassandra.spark.data.ReplicationFactor;
 
 public class BulkWriteValidator implements AutoCloseable
 {
@@ -41,6 +43,7 @@ public class BulkWriteValidator implements AutoCloseable
     private final ReplicaAwareFailureHandler<RingInstance> failureHandler;
     private final CassandraRingMonitor monitor;
     private final JobInfo job;
+    private final ReplicationFactor replicationFactor;
     private String phase = "Initializing";
 
     private final ClusterInfo cluster;
@@ -50,7 +53,10 @@ public class BulkWriteValidator implements AutoCloseable
     {
         cluster = bulkWriterContext.cluster();
         job = bulkWriterContext.job();
-        failureHandler = new ReplicaAwareFailureHandler<>(cluster.getRing(true));
+        // the snapshot either remain valid or it is out of date and fail by CassandraRingMonitor
+        CassandraRing<RingInstance> cassandraRingSnapshot = cluster.getRing(true);
+        failureHandler = new ReplicaAwareFailureHandler<>(cassandraRingSnapshot);
+        replicationFactor = cassandraRingSnapshot.getReplicationFactor();
         monitor = new CassandraRingMonitor(cluster, cancelJobFunc, 1000, TimeUnit.MILLISECONDS,
                                            bulkWriterContext.conf().getRingRetryCount());
     }
@@ -65,6 +71,11 @@ public class BulkWriteValidator implements AutoCloseable
         return phase;
     }
 
+    public ReplicationFactor replicationFactor()
+    {
+        return replicationFactor;
+    }
+
     public void validateInitialEnvironment()
     {
         updateInstanceAvailability();
@@ -77,7 +88,7 @@ public class BulkWriteValidator implements AutoCloseable
         monitor.stop();
     }
 
-    public void validateCLOrFail()
+    public synchronized void validateCLOrFail()
     {
         validateClOrFail(failureHandler, LOGGER, phase, job);
     }

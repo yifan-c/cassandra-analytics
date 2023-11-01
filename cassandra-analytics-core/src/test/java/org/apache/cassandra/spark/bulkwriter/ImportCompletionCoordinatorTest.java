@@ -29,10 +29,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Range;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -51,17 +52,25 @@ import org.apache.cassandra.spark.bulkwriter.token.CassandraRing;
 import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
 import org.apache.cassandra.spark.data.ReplicationFactor;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
+import org.apache.cassandra.spark.transports.storage.extensions.StorageTransportExtension;
+import org.mockito.ArgumentCaptor;
 import org.mockito.stubbing.Answer;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atMostOnce;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,6 +83,8 @@ public class ImportCompletionCoordinatorTest
     BulkSparkConf mockConf;
     BlobDataTransferApi dataTransferApi;
     UUID jobId;
+    StorageTransportExtension mockExtension;
+    ArgumentCaptor<String> appliedObjectKeys;
 
     @BeforeEach
     public void setup() throws Exception
@@ -112,53 +123,106 @@ public class ImportCompletionCoordinatorTest
         // clients will not be used in this test class; mock is at the API method level
         BlobDataTransferApi api = new BlobDataTransferApi(mockJobInfo, mock(InternalSidecarClient.class), mock(StorageClient.class));
         dataTransferApi = spy(api);
+
+        mockExtension = mock(StorageTransportExtension.class);
+        appliedObjectKeys = ArgumentCaptor.forClass(String.class);
+        doNothing().when(mockExtension).onObjectApplied(any(), appliedObjectKeys.capture(), anyLong(), anyLong());
     }
 
     @Test
     public void testAwaitForCompletionWithNoErrors()
     {
-        List<BlobStreamResult> resultList = buildBlobStreamResult(0, false);
-        ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
-        validateAllSlicesWereCalled(resultList);
+        List<BlobStreamResult> resultList = buildBlobStreamResult(0, false, 0);
+        ImportCompletionCoordinator.of(0, mockWriterContext, dataTransferApi,
+                                       writerValidator, resultList, mockExtension)
+                                   .waitForCompletion();
+        validateAllSlicesWereCalledAtMostOnce(resultList);
+        assertEquals(resultList.size(), appliedObjectKeys.getAllValues().size(),
+                     "All objects should be applied and reported for exactly once");
+        assertEquals(allTestObjectKeys(), new HashSet<>(appliedObjectKeys.getAllValues()));
     }
 
     @Test
     public void testAwaitForCompletionWithNoErrorsAndSlowImport()
     {
-        List<BlobStreamResult> resultList = buildBlobStreamResult(0, true);
-        ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
-        validateAllSlicesWereCalled(resultList);
+        List<BlobStreamResult> resultList = buildBlobStreamResult(0, true, 0);
+        ImportCompletionCoordinator.of(0, mockWriterContext, dataTransferApi,
+                                       writerValidator, resultList, mockExtension)
+                                   .waitForCompletion();
+        validateAllSlicesWereCalledAtMostOnce(resultList);
+        assertEquals(resultList.size(), appliedObjectKeys.getAllValues().size(),
+                     "All objects should be applied and reported for exactly once");
+        assertEquals(allTestObjectKeys(), new HashSet<>(appliedObjectKeys.getAllValues()));
     }
 
     @Test // the test scenario has error when checking, but CL passes overall and the import is successful
     public void testAwaitForCompletionWithErrorsAndCLPasses()
     {
         // There is 1 failure in each replica set. 2 out of 3 replicas succeeds.
-        List<BlobStreamResult> resultList = buildBlobStreamResult(1, false);
-        ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
-        validateAllSlicesWereCalled(resultList);
+        List<BlobStreamResult> resultList = buildBlobStreamResult(1, false, 0);
+        ImportCompletionCoordinator.of(0, mockWriterContext, dataTransferApi,
+                                       writerValidator, resultList, mockExtension)
+                                   .waitForCompletion();
+        validateAllSlicesWereCalledAtMostOnce(resultList);
+        assertEquals(resultList.size(), appliedObjectKeys.getAllValues().size(),
+                     "All objects should be applied and reported for exactly once");
+        assertEquals(allTestObjectKeys(), new HashSet<>(appliedObjectKeys.getAllValues()));
     }
 
     @Test // the test scenario has errors that fails CL, the import fails
     public void testAwaitForCompletionWithErrorsAndCLFails()
     {
         // There is 2 failure in each replica set. Only 1 out of 3 replicas succeeds.
-        String errorMessage = "Failed to load 1 ranges with QUORUM for job " + jobId + " in phase WaitForCommitCompletion";
-        List<BlobStreamResult> resultList = buildBlobStreamResult(2, false);
-        try
-        {
-            ImportCompletionCoordinator.of(mockWriterContext, dataTransferApi, writerValidator, resultList).waitForCompletion();
-        }
-        catch (RuntimeException exception)
-        {
-            assertNotNull(exception.getMessage());
-            assertTrue(exception.getMessage().contains(errorMessage));
-            assertNotNull(exception.getCause());
-        }
-        validateAllSlicesWereCalled(resultList);
+        // All replica sets fail, the number of ranges is not deterministic.
+        // Therefore, the assertion omits the number of ranges in the message
+        String errorMessage = "ranges with QUORUM for job " + jobId + " in phase WaitForCommitCompletion";
+        List<BlobStreamResult> resultList = buildBlobStreamResult(2, false, 0);
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+            ImportCompletionCoordinator.of(0, mockWriterContext, dataTransferApi,
+                                           writerValidator, resultList, mockExtension)
+                                       .waitForCompletion();
+        });
+        assertNotNull(exception.getMessage());
+        assertTrue(exception.getMessage().contains("Failed to load"));
+        assertTrue(exception.getMessage().contains(errorMessage));
+        assertNotNull(exception.getCause());
+        validateAllSlicesWereCalledAtMostOnce(resultList);
+        assertEquals(0, appliedObjectKeys.getAllValues().size(),
+                     "No object should be applied and reported");
     }
 
-    private List<BlobStreamResult> buildBlobStreamResult(int failedInstanceCount, boolean simulateSlowImport)
+    @Test
+    public void testCLUnsatisfiedRanges()
+    {
+        String errorMessage = "Some of the token ranges cannot satisfy with consistency level. job=" + jobId + " phase=WaitForCommitCompletion";
+        // CL check won't fail as there is no failed instances.
+        // The check won't be satisfied too since there is not enough available instances.
+        List<BlobStreamResult> resultList = buildBlobStreamResult(0, false, 2);
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+            ImportCompletionCoordinator.of(0, mockWriterContext, dataTransferApi,
+                                           writerValidator, resultList, mockExtension)
+                                       .waitForCompletion();
+        });
+        assertNotNull(exception.getMessage());
+        assertTrue(exception.getMessage().contains(errorMessage));
+        assertNull(exception.getCause());
+        validateAllSlicesWereCalledAtMostOnce(resultList);
+        assertEquals(0, appliedObjectKeys.getAllValues().size(),
+                     "No object should be applied and reported");
+    }
+
+    private Set<String> allTestObjectKeys()
+    {
+        return IntStream.range(0, 10).boxed().map(i -> "key_for_instance_" + i).collect(Collectors.toSet());
+    }
+
+    /**
+     * @param failedInstanceCount number of instances in each replica set that fail the http request
+     * @param simulateSlowImport slow import with artificial delay
+     * @param unavailableInstanceCount number of instances in each replica set that is not included in the BlobStreamResult
+     * @return a list of blob stream result
+     */
+    private List<BlobStreamResult> buildBlobStreamResult(int failedInstanceCount, boolean simulateSlowImport, int unavailableInstanceCount)
     {
         List<BlobStreamResult> resultList = new ArrayList<>();
         int totalInstances = 10;
@@ -170,12 +234,23 @@ public class ImportCompletionCoordinatorTest
                                                           ringInstance(i + 2, totalInstances));
             Set<CreatedRestoreSlice> createdRestoreSlices = new HashSet<>();
             int failedPerReplica = failedInstanceCount;
+            int unavailablePerReplica = unavailableInstanceCount;
+            // create one distinct slice per instance
             CreateSliceRequestPayload mockCreateSliceRequestPayload = mock(CreateSliceRequestPayload.class);
             when(mockCreateSliceRequestPayload.startToken()).thenReturn(BigInteger.valueOf(100 * i));
             when(mockCreateSliceRequestPayload.endToken()).thenReturn(BigInteger.valueOf(100 * (1 + i)));
             when(mockCreateSliceRequestPayload.sliceId()).thenReturn(UUID.randomUUID().toString());
+            when(mockCreateSliceRequestPayload.key()).thenReturn("key_for_instance_" + i); // to be captured by extension mock
+            when(mockCreateSliceRequestPayload.bucket()).thenReturn("bucket"); // to be captured by extension mock
+            when(mockCreateSliceRequestPayload.compressedSize()).thenReturn(1L); // to be captured by extension mock
+            List<RingInstance> passedReplicaSet = new ArrayList<>();
             for (RingInstance instance : replicaSet)
             {
+                if (unavailablePerReplica-- > 0)
+                {
+                    continue; // do not include this instance
+                }
+                passedReplicaSet.add(instance);
                 createdRestoreSlices.add(new CreatedRestoreSlice(mockCreateSliceRequestPayload));
                 if (simulateSlowImport && i == totalInstances - 1)
                 {
@@ -206,13 +281,14 @@ public class ImportCompletionCoordinatorTest
                 }
             }
             BlobStreamResult result = new BlobStreamResult("", mock(Range.class), Collections.emptyList(),
-                                                           replicaSet, 0, createdRestoreSlices);
+                                                           passedReplicaSet, 0, createdRestoreSlices);
             resultList.add(result);
         }
         return resultList;
     }
 
-    private void validateAllSlicesWereCalled(List<BlobStreamResult> resultList)
+    // Some slice might not be called due to short circuit, hence at most once
+    private void validateAllSlicesWereCalledAtMostOnce(List<BlobStreamResult> resultList)
     {
         for (BlobStreamResult blobStreamResult : resultList)
         {
@@ -220,7 +296,7 @@ public class ImportCompletionCoordinatorTest
             {
                 for (CreatedRestoreSlice createdRestoreSlice : blobStreamResult.createdRestoreSlices)
                 {
-                    verify(dataTransferApi, times(1))
+                    verify(dataTransferApi, atMostOnce())
                     .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
                                                   eq(createdRestoreSlice.sliceRequestPayload()));
                 }

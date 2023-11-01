@@ -71,6 +71,12 @@ public class ExampleStorageTransportExtension implements StorageTransportExtensi
     }
 
     @Override
+    public void onTransportStart(long elapsedMillis)
+    {
+
+    }
+
+    @Override
     public void setCredentialChangeListener(CredentialChangeListener credentialChangeListener)
     {
         LOGGER.info("Token listener registered for job {}", jobId);
@@ -104,6 +110,12 @@ public class ExampleStorageTransportExtension implements StorageTransportExtensi
     {
         LOGGER.info("All {} objects, totaling {} rows, are persisted with elapsed time {}ms",
                     objectsCount, rowCount, elapsedMillis);
+    }
+
+    @Override
+    public void onObjectApplied(String bucket, String key, long sizeInBytes, long elapsedMillis)
+    {
+
     }
 
     @Override

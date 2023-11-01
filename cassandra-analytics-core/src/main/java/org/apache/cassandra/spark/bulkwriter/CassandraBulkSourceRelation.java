@@ -153,7 +153,10 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
         writeValidator.setPhase("Environment Validation");
         writeValidator.validateInitialEnvironment();
         onDirectTransport(ctx -> writeValidator.setPhase("UploadAndCommit"));
-        onCloudStorageTransport(ctx -> writeValidator.setPhase("UploadToCloudStorage"));
+        onCloudStorageTransport(ctx -> {
+            writeValidator.setPhase("UploadToCloudStorage");
+            ctx.transportExtensionImplementation().onTransportStart(getElapsedTimeMillis());
+        });
 
         try
         {
@@ -186,8 +189,9 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                 // Unpersist broadcast context to free up executors while driver waits for the
                 // import to complete
                 unpersist();
-                ImportCompletionCoordinator.of(writerContext, context.dataTransferApi(),
-                                               writeValidator, resultsAsBlobStreamResults)
+                ImportCompletionCoordinator.of(startTimeNanos, writerContext, context.dataTransferApi(),
+                                               writeValidator, resultsAsBlobStreamResults,
+                                               context.transportExtensionImplementation())
                                            .waitForCompletion();
                 markRestoreJobAsSucceeded(context);
             });

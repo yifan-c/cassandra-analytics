@@ -148,6 +148,7 @@ public class BlobDataTransferApi
      *
      * @param sidecarInstance           the sidecar instance where we will create the slice
      * @param createSliceRequestPayload the payload to create the slice
+     * @return future of create restore slice request
      */
     public CompletableFuture<Void> createRestoreSliceFromDriver(SidecarInstance sidecarInstance,
                                                                 CreateSliceRequestPayload createSliceRequestPayload)
@@ -160,8 +161,8 @@ public class BlobDataTransferApi
      * Create a restore slice with custom retry policy
      */
     private CompletableFuture<Void> createRestoreSlice(SidecarInstance sidecarInstance,
-                                    CreateSliceRequestPayload createSliceRequestPayload,
-                                    RetryPolicy retryPolicy)
+                                                       CreateSliceRequestPayload createSliceRequestPayload,
+                                                       RetryPolicy retryPolicy)
     {
         QualifiedTableName qualifiedTableName = jobInfo.getQualifiedTableName();
         CreateRestoreJobSliceRequest request = new CreateRestoreJobSliceRequest(qualifiedTableName.keyspace(),
