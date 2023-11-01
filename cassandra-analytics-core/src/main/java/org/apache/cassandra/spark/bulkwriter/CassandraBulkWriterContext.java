@@ -91,9 +91,7 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
         UUID jobId = bridge.getTimeUUID();
         jobInfo = initializeJobInfo(conf, jobId, initializeTokenPartitioner(conf, sparkContext, ring));
 
-        transportContext = conf.getTransportInfo()
-                               .getTransport()
-                               .createContext(this.conf, jobInfo, clusterInfo, true);
+        transportContext = createTransportContext(true);
 
         String keyspace = conf.keyspace;
         String table = conf.table;
@@ -200,12 +198,18 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
         {
             if (transportContext == null)
             {
-                transportContext = conf.getTransportInfo()
-                                       .getTransport()
-                                       .createContext(conf, jobInfo, clusterInfo, false);
+                transportContext = createTransportContext(false);
             }
         }
         return transportContext;
+    }
+
+    @NotNull
+    protected TransportContext createTransportContext(boolean isOnDriver)
+    {
+        return conf.getTransportInfo()
+                   .getTransport()
+                   .createContext(conf, jobInfo, clusterInfo, isOnDriver);
     }
 
     @NotNull
