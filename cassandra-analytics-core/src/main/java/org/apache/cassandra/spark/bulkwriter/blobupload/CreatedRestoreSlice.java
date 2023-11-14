@@ -45,7 +45,7 @@ public class CreatedRestoreSlice implements Serializable
     private static final long serialVersionUID = 1738928448022537598L;
 
     private transient CreateSliceRequestPayload sliceRequestPayload;
-    private transient Set<CassandraInstance> succeededInstances;
+    private final transient Set<CassandraInstance> succeededInstances = new HashSet<>();
     private transient boolean isSatisfied = false;
     private final String sliceRequestPayloadJson; // equals and hashcode use and only implement with this field
 
@@ -84,10 +84,6 @@ public class CreatedRestoreSlice implements Serializable
 
     public synchronized void addSucceededInstance(CassandraInstance instance)
     {
-        if (succeededInstances == null)
-        {
-            succeededInstances = new HashSet<>();
-        }
         succeededInstances.add(instance);
     }
 
@@ -108,7 +104,8 @@ public class CreatedRestoreSlice implements Serializable
         }
 
 
-        if (consistencyLevel.hasDefinitivelySatisfied(succeededInstances, replicationFactor, localDC))
+        if (!succeededInstances.isEmpty()
+            && consistencyLevel.hasDefinitivelySatisfied(succeededInstances, replicationFactor, localDC))
         {
             isSatisfied = true;
             return ConsistencyLevelCheckResult.SATISFIED;
