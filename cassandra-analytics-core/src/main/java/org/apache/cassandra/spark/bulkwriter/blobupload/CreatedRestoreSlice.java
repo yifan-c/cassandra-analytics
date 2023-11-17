@@ -20,9 +20,9 @@
 package org.apache.cassandra.spark.bulkwriter.blobupload;
 
 import java.io.Serializable;
-import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +45,7 @@ public class CreatedRestoreSlice implements Serializable
     private static final long serialVersionUID = 1738928448022537598L;
 
     private transient CreateSliceRequestPayload sliceRequestPayload;
-    private final transient Set<CassandraInstance> succeededInstances = new HashSet<>();
+    private transient Set<CassandraInstance> succeededInstances;
     private transient boolean isSatisfied = false;
     private final String sliceRequestPayloadJson; // equals and hashcode use and only implement with this field
 
@@ -82,16 +82,17 @@ public class CreatedRestoreSlice implements Serializable
         }
     }
 
-    public synchronized void addSucceededInstance(CassandraInstance instance)
+    public void addSucceededInstance(CassandraInstance instance)
     {
-        succeededInstances.add(instance);
+        succeededInstances().add(instance);
     }
 
     /**
      * Check whether the slice satisfies the consistency level
-     * @param consistencyLevel consistency level to check
-     * @param replicationFactor replicaton factor to check
-     * @param localDC local DC name if any
+     *
+     * @param consistencyLevel  consistency level to check
+     * @param replicationFactor replication factor to check
+     * @param localDC           local DC name if any
      * @return check result, either not satisfied, satisfied, or already satisfied
      */
     public synchronized ConsistencyLevelCheckResult checkForConsistencyLevel(ConsistencyLevel consistencyLevel,
@@ -103,9 +104,8 @@ public class CreatedRestoreSlice implements Serializable
             return ConsistencyLevelCheckResult.ALREADY_SATISFIED;
         }
 
-
-        if (!succeededInstances.isEmpty()
-            && consistencyLevel.hasDefinitivelySatisfied(succeededInstances, replicationFactor, localDC))
+        if (!succeededInstances().isEmpty()
+            && consistencyLevel.hasDefinitivelySatisfied(succeededInstances(), replicationFactor, localDC))
         {
             isSatisfied = true;
             return ConsistencyLevelCheckResult.SATISFIED;
@@ -114,6 +114,7 @@ public class CreatedRestoreSlice implements Serializable
         return ConsistencyLevelCheckResult.NOT_SATISFIED;
     }
 
+    @Override
     public boolean equals(Object o)
     {
         if (this == o)
@@ -128,14 +129,34 @@ public class CreatedRestoreSlice implements Serializable
         return Objects.equals(sliceRequestPayloadJson, that.sliceRequestPayloadJson);
     }
 
+    @Override
     public int hashCode()
     {
         return Objects.hash(sliceRequestPayloadJson);
     }
 
+    @Override
     public String toString()
     {
         return sliceRequestPayload.toString();
+    }
+
+    Set<CassandraInstance> succeededInstances()
+    {
+        Set<CassandraInstance> currentInstances = succeededInstances;
+        if (currentInstances != null)
+        {
+            return currentInstances;
+        }
+
+        synchronized (this)
+        {
+            if (succeededInstances == null)
+            {
+                succeededInstances = ConcurrentHashMap.newKeySet();
+            }
+        }
+        return succeededInstances;
     }
 
     private static String toJson(@NotNull CreateSliceRequestPayload sliceRequestPayload)
