@@ -19,6 +19,7 @@
 
 package org.apache.cassandra.spark.bulkwriter;
 
+import java.io.Closeable;
 import java.io.Serializable;
 
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobDataTransferApi;
@@ -30,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 /**
  * An interface that defines the transport context required to perform the bulk writes
  */
-public interface TransportContext
+public interface TransportContext extends Closeable
 {
     /**
      * @return Spark configuration for bulk writer job
@@ -53,6 +54,11 @@ public interface TransportContext
      * @return a new stream session
      */
     StreamSession<? extends TransportContext> createStreamSession(TaskContext taskContext);
+
+    @Override
+    default void close()
+    {
+    }
 
     /**
      * Context used when prepared SSTables are directly written to C* through Sidecar

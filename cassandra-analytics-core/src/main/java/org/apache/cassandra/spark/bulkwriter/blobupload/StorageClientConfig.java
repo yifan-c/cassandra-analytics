@@ -51,7 +51,7 @@ public class StorageClientConfig implements Serializable
                                long nioHttpClientConnectionAcquisitionTimeoutSeconds,
                                int nioHttpClientMaxConcurrency)
     {
-        this.threadNamePrefix = "storage-client-";
+        this.threadNamePrefix = "storage-client";
         this.concurrency = concurrency;
         this.threadKeepAliveSeconds = threadKeepAliveSeconds;
         this.maxChunkSizeInBytes = maxChunkSizeInBytes;

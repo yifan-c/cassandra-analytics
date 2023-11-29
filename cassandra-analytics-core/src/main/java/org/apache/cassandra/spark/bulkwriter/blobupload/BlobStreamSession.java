@@ -47,6 +47,7 @@ import org.apache.cassandra.spark.bulkwriter.StreamResult;
 import org.apache.cassandra.spark.bulkwriter.StreamSession;
 import org.apache.cassandra.spark.bulkwriter.TransportContext;
 import org.apache.cassandra.spark.bulkwriter.util.TaskContextUtils;
+import org.apache.cassandra.spark.bulkwriter.util.ThreadUtil;
 import org.apache.cassandra.spark.common.client.ClientException;
 import org.apache.cassandra.spark.transports.storage.StorageCredentials;
 
@@ -70,7 +71,8 @@ public class BlobStreamSession extends StreamSession<TransportContext.CloudStora
                              Path partitionUniquePath)
     {
         this(partitionId, taskAttemptId, transportContext, sessionID, tokenRange,
-             Executors.newSingleThreadExecutor(), partitionUniquePath);
+             Executors.newSingleThreadExecutor(ThreadUtil.threadFactory("Session=" + sessionID + ",partition=" + partitionId + ",attempt=" + taskAttemptId)),
+             partitionUniquePath);
     }
 
     public BlobStreamSession(int partitionId, long taskAttemptId,

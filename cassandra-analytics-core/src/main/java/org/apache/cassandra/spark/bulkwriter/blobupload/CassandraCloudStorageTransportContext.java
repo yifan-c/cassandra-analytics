@@ -53,6 +53,7 @@ public class CassandraCloudStorageTransportContext implements TransportContext.C
     private final JobInfo jobInfo;
     @NotNull
     private final ClusterInfo clusterInfo;
+    private StorageClient storageClient;
 
     public CassandraCloudStorageTransportContext(@NotNull BulkSparkConf conf,
                                                  @NotNull JobInfo jobInfo,
@@ -118,6 +119,7 @@ public class CassandraCloudStorageTransportContext implements TransportContext.C
 
     /**
      * Instantiate and initialize the StorageTransportExtension instance, for only once.
+     *
      * @return StorageTransportExtension instance
      */
     @NotNull
@@ -130,8 +132,7 @@ public class CassandraCloudStorageTransportContext implements TransportContext.C
     // only invoke it in constructor
     protected BlobDataTransferApi createBlobDataTransferApi()
     {
-        StorageClient storageClient = new StorageClient(storageTransportConfiguration,
-                                                        conf.getStorageClientConfig());
+        storageClient = new StorageClient(storageTransportConfiguration, conf.getStorageClientConfig());
         return new BlobDataTransferApi(jobInfo,
                                        clusterInfo.getCassandraContext().getSidecarClient(),
                                        storageClient);
@@ -156,6 +157,22 @@ public class CassandraCloudStorageTransportContext implements TransportContext.C
                | IllegalAccessException | NoSuchMethodException e)
         {
             throw new RuntimeException("Invalid storage transport extension class specified: '" + transportExtensionClass, e);
+        }
+    }
+
+    @Override
+    public void close()
+    {
+        if (storageClient != null)
+        {
+            try
+            {
+                storageClient.close();
+            }
+            catch (Exception exception)
+            {
+                LOGGER.warn("Failed to close storage client", exception);
+            }
         }
     }
 }

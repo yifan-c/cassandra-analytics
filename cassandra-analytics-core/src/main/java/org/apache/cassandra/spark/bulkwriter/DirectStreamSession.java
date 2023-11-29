@@ -42,6 +42,7 @@ import org.apache.commons.io.FileUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.spark.bulkwriter.util.ThreadUtil;
 import org.apache.cassandra.spark.common.MD5Hash;
 import org.apache.cassandra.spark.common.SSTables;
 
@@ -54,7 +55,7 @@ public class DirectStreamSession extends StreamSession<TransportContext.DirectDa
 
     public DirectStreamSession(TransportContext.DirectDataBulkWriterContext transportContext, String sessionID, Range<BigInteger> tokenRange)
     {
-        this(transportContext, sessionID, tokenRange, Executors.newSingleThreadExecutor());
+        this(transportContext, sessionID, tokenRange, Executors.newSingleThreadExecutor(ThreadUtil.threadFactory("Session=" + sessionID)));
     }
 
     public DirectStreamSession(TransportContext.DirectDataBulkWriterContext transportContext, String sessionID,
@@ -155,6 +156,7 @@ public class DirectStreamSession extends StreamSession<TransportContext.DirectDa
         directDataTransferApi.uploadSSTableComponent(componentFile, ssTableIdx, instance, this.sessionID, fileHash);
     }
 
+    @Override
     public StreamResult close() throws ExecutionException, InterruptedException
     {
         closeFutures();

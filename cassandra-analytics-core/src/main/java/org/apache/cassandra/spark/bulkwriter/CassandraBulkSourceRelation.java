@@ -166,6 +166,10 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
             List<StreamResult> results = sortedRDD.mapPartitions(partitionsFlatMapFunc(broadcastContext, columnNames))
                                                   .collect();
 
+            // Unpersist broadcast context to free up executors while driver waits for the
+            // import to complete
+            unpersist();
+
             onDirectTransport(ctx -> writeValidator.failIfRingChanged());
             long rowCount = results.stream().mapToLong(res -> res.rowCount).sum();
             LOGGER.info("Bulk writer has written {} rows", rowCount);
@@ -186,9 +190,6 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                        .onAllObjectsPersisted(objectsCount, rowCount, getElapsedTimeMillis());
                 writeValidator.failIfRingChanged();
 
-                // Unpersist broadcast context to free up executors while driver waits for the
-                // import to complete
-                unpersist();
                 ImportCompletionCoordinator.of(startTimeNanos, writerContext, context.dataTransferApi(),
                                                writeValidator, resultsAsBlobStreamResults,
                                                context.transportExtensionImplementation())
@@ -217,9 +218,6 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
             {
                 // We've made our best effort to close the Bulk Writer context
             }
-            // unpersist was already called for the cloud storage transport, only call it if we are in direct
-            // transport mode
-            onDirectTransport(ctx -> unpersist());
         }
     }
 

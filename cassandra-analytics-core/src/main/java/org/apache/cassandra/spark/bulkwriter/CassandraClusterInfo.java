@@ -165,7 +165,6 @@ public class CassandraClusterInfo implements ClusterInfo
         {
             LOGGER.info("Closing {}", this);
             isClosed = true;
-            getCassandraContext().close();
         }
     }
 

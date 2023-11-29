@@ -119,6 +119,11 @@ public class CassandraBulkWriterContext implements BulkWriterContext, KryoSerial
             {
                 clusterInfo.close();
             }
+
+            if (transportContext != null)
+            {
+                transportContext.close();
+            }
         }
     }
 

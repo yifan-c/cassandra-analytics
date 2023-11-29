@@ -71,7 +71,7 @@ import software.amazon.awssdk.utils.ThreadFactoryBuilder;
 /**
  * Client used for upload SSTable bundle to S3 bucket
  */
-public class StorageClient
+public class StorageClient implements AutoCloseable
 {
     public static final char SEPARATOR = '/';
     private final StorageTransportConfiguration storageTransportConfiguration;
@@ -140,7 +140,7 @@ public class StorageClient
      * chunk size set, and upload to S3.
      *
      * @param credentials credentials used for uploading to S3
-     * @param bundle bundle of sstables
+     * @param bundle      bundle of sstables
      * @return BundleStorageObject representing the uploaded bundle
      * @throws IOException          when an IO exception occurs during the multipart upload
      * @throws ExecutionException   when it fails to retrieve the state of a task
@@ -188,6 +188,15 @@ public class StorageClient
                                   .storageObjectKey(key)
                                   .storageObjectChecksum(completeMultipartUploadResponse.eTag())
                                   .build();
+    }
+
+    @Override
+    public void close()
+    {
+        if (client != null)
+        {
+            client.close();
+        }
     }
 
     private List<CompletedPart> uploadPartsOfBundle(String key, String uploadId,

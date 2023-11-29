@@ -115,7 +115,7 @@ public class RecordWriter implements Serializable
         {
             LOGGER.error("[{}] Failed to write job={}, taskStageAttemptNumber={}, taskAttemptNumber={}",
                          partitionId,
-                         job.getId().toString(),
+                         job.getId(),
                          taskContext.stageAttemptNumber(),
                          taskContext.attemptNumber());
 
