@@ -255,7 +255,7 @@ public class CassandraClusterInfo implements ClusterInfo
         String keyspaceSchema = getKeyspaceSchema(true);
         if (keyspaceSchema == null)
         {
-            throw new RuntimeException(String.format("Could not keyspace schema information for keyspace %s",
+            throw new RuntimeException(String.format("Could not retrieve keyspace schema information for keyspace %s",
                                                      conf.keyspace));
         }
         return CqlUtils.extractReplicationFactor(keyspaceSchema, conf.keyspace);
