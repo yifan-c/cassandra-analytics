@@ -22,7 +22,10 @@ package org.apache.cassandra.clients;
 import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.Test;
 
+import org.apache.cassandra.spark.bulkwriter.DataTransport;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Unit tests for the {@link Sidecar.ClientConfig} inner class
@@ -97,5 +100,15 @@ public class SidecarClientConfigTest
     {
         Sidecar.ClientConfig clientConfig = Sidecar.ClientConfig.create(ImmutableMap.of("timeoutseconds", "2"));
         assertEquals(2, clientConfig.timeoutSeconds());
+    }
+
+    @Test
+    public void testTransportModeBasedWriterUserAgent()
+    {
+        String userAgentStr = Sidecar.transportModeBasedWriterUserAgent(DataTransport.DIRECT);
+        assertTrue(userAgentStr.endsWith(" writer"));
+
+        userAgentStr = Sidecar.transportModeBasedWriterUserAgent(DataTransport.S3_COMPAT);
+        assertTrue(userAgentStr.endsWith(" writer-s3"));
     }
 }

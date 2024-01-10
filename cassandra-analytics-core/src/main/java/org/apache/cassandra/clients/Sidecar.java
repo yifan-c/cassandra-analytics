@@ -49,6 +49,7 @@ import org.apache.cassandra.sidecar.client.retry.ExponentialBackoffRetryPolicy;
 import org.apache.cassandra.sidecar.client.retry.RetryPolicy;
 import org.apache.cassandra.sidecar.common.NodeSettings;
 import org.apache.cassandra.spark.bulkwriter.BulkSparkConf;
+import org.apache.cassandra.spark.bulkwriter.DataTransport;
 import org.apache.cassandra.spark.common.model.CassandraInstance;
 import org.apache.cassandra.spark.data.FileType;
 import org.apache.cassandra.spark.utils.BuildInfo;
@@ -122,15 +123,28 @@ public final class Sidecar
         return buildClient(sidecarConfig, vertx, httpClientConfig, sidecarInstancesProvider);
     }
 
+    static String transportModeBasedWriterUserAgent(DataTransport transport)
+    {
+        switch (transport)
+        {
+            case S3_COMPAT:
+                return BuildInfo.WRITER_S3_USER_AGENT;
+            case DIRECT:
+            default:
+                return BuildInfo.WRITER_USER_AGENT;
+        }
+    }
+
     public static SidecarClient from(SidecarInstancesProvider sidecarInstancesProvider, BulkSparkConf conf)
     {
         Vertx vertx = Vertx.vertx(new VertxOptions().setUseDaemonThread(true)
                                                     .setWorkerPoolSize(conf.getMaxHttpConnections()));
 
+        String userAgent = transportModeBasedWriterUserAgent(conf.getTransportInfo().getTransport());
         HttpClientConfig httpClientConfig = new HttpClientConfig.Builder<>()
                                             .timeoutMillis(conf.getHttpResponseTimeoutMs())
                                             .idleTimeoutMillis(conf.getHttpConnectionTimeoutMs())
-                                            .userAgent(BuildInfo.WRITER_USER_AGENT)
+                                            .userAgent(userAgent)
                                             .keyStoreInputStream(conf.getKeyStore())
                                             .keyStorePassword(conf.getKeyStorePassword())
                                             .keyStoreType(conf.getKeyStoreTypeOrDefault())
