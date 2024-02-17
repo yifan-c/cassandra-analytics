@@ -23,6 +23,7 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.google.common.collect.Range;
 import org.slf4j.Logger;
@@ -109,6 +110,13 @@ public final class ImportCompletionCoordinator
             }
         }
 
+        AtomicInteger counter = new AtomicInteger(0);
+        for (CompletableFuture<?> future : results)
+        {
+            future.whenComplete((v, t) -> LOGGER.info("Completed slice requests {}/{}",
+                                                      counter.incrementAndGet(), results.size()));
+        }
+
         // the result either fail early once firstFailure future completes exceptionally, or the results list completes
         CompletableFuture<?> result = CompletableFuture.anyOf(firstFailure, CompletableFuture.allOf(results.toArray(new CompletableFuture[0])));
         result.join();
@@ -130,31 +138,32 @@ public final class ImportCompletionCoordinator
         CreateSliceRequestPayload createSliceRequestPayload = createdRestoreSlice.sliceRequestPayload();
         CompletableFuture<Void> fut = dataTransferApi.createRestoreSliceFromDriver(sidecarInstance,
                                                                                    createSliceRequestPayload);
-        fut = fut.handleAsync((ignored, throwable) -> {
+        return fut.handleAsync((ignored, throwable) -> {
             if (throwable == null)
             {
+                LOGGER.info("Slice import succeeded on instance. instance={} slice={}",
+                            instance.getNodeName(), createSliceRequestPayload);
                 handleSuccessfulSliceInstance(createdRestoreSlice, instance, createSliceRequestPayload);
             }
             else
             {
-                handleFailedSliceInstance(instance, createSliceRequestPayload, firstFailure, results, throwable, sidecarInstance);
+                // use handle API to swallow the throwable on purpose; the throwable is set to `firstFailure`
+                handleFailedSliceInstance(instance, createSliceRequestPayload, firstFailure, results, throwable);
             }
             return null;
         });
-        return fut;
     }
 
     private void handleFailedSliceInstance(RingInstance instance,
                                            CreateSliceRequestPayload createSliceRequestPayload,
                                            CompletableFuture<Void> firstFailure,
                                            List<CompletableFuture<?>> results,
-                                           Throwable throwable,
-                                           SidecarInstance sidecarInstance)
+                                           Throwable throwable)
     {
+        LOGGER.warn("Import failed. instance={} slice={}", instance.getNodeName(), createSliceRequestPayload, throwable);
+
         Range<BigInteger> range = Range.openClosed(createSliceRequestPayload.startToken(),
                                                    createSliceRequestPayload.endToken());
-        LOGGER.error("Failed to import. slice={} instance={}",
-                     createSliceRequestPayload, sidecarInstance, throwable);
         writeValidator.updateFailureHandler(range, instance, "Failed to import slice. " + throwable.getMessage());
         // it either passes or throw if consistency level cannot be satisfied
         try
@@ -173,6 +182,7 @@ public final class ImportCompletionCoordinator
                                                RingInstance instance,
                                                CreateSliceRequestPayload createSliceRequestPayload)
     {
+        LOGGER.info("Import succeeded. instance={} slice={}", createSliceRequestPayload, instance.getNodeName());
         createdRestoreSlice.addSucceededInstance(instance);
         if (SATISFIED ==
             createdRestoreSlice.checkForConsistencyLevel(job.getConsistencyLevel(),

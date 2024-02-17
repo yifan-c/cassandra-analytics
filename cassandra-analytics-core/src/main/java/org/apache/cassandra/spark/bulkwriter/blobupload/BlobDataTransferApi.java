@@ -23,6 +23,9 @@ import java.io.IOException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.apple.cassandra.data.CreateRestoreJobRequestPayload;
 import com.apple.cassandra.data.CreateRestoreJobResponsePayload;
 import com.apple.cassandra.data.CreateSliceRequestPayload;
@@ -236,8 +239,9 @@ public class BlobDataTransferApi
     /**
      * Retry when server return CREATED 201. Besides that, its behavior is the same as what the default does.
      */
-    class DriverCreateSliceRetryPolicy extends RetryPolicy
+    static class DriverCreateSliceRetryPolicy extends RetryPolicy
     {
+        private static final Logger LOGGER = LoggerFactory.getLogger(DriverCreateSliceRetryPolicy.class);
         private final RetryPolicy delegate;
 
         DriverCreateSliceRetryPolicy(RetryPolicy delegate)
@@ -253,12 +257,15 @@ public class BlobDataTransferApi
             if (httpResponse != null && httpResponse.statusCode() == HttpResponseStatus.CREATED.code())
             {
                 // This is very hacky due to sidecar client is not open to modification!
-                // ACCEPTED will trigger a special retry, which is wanted here.
+                // ACCEPTED will trigger a special/unlimited retry, which is wanted here.
                 // Therefore, fake a http response by setting the status code to ACCEPTED
-                HttpResponse fakeResponseForRetry =  new HttpResponseImpl(HttpResponseStatus.ACCEPTED.code(),
-                                                                          httpResponse.statusMessage(),
-                                                                          httpResponse.headers(),
-                                                                          httpResponse.sidecarInstance());
+
+                LOGGER.info("Received CREATED(201) for CreateSliceRequest. " +
+                            "Changing the status code to ACCEPTED(202) for unlimited retry.");
+                HttpResponse fakeResponseForRetry = new HttpResponseImpl(HttpResponseStatus.ACCEPTED.code(),
+                                                                         httpResponse.statusMessage(),
+                                                                         httpResponse.headers(),
+                                                                         httpResponse.sidecarInstance());
                 delegate.onResponse(completableFuture, request, fakeResponseForRetry,
                                     throwable, attempts, canRetryOnADifferentHost,
                                     retryAction);

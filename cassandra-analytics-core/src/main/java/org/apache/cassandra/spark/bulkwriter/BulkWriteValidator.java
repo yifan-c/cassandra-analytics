@@ -63,6 +63,7 @@ public class BulkWriteValidator implements AutoCloseable
 
     public void setPhase(String phase)
     {
+        LOGGER.info("Updating write phase from {} to {}", this.phase, phase);
         this.phase = phase;
     }
 
@@ -177,9 +178,12 @@ public class BulkWriteValidator implements AutoCloseable
 
     public synchronized void updateFailureHandler(List<? extends StreamResult> results)
     {
-        results.forEach(res -> {
-            res.failures.forEach(err -> failureHandler.addFailure(err.failedRange, err.instance, err.errMsg));
-        });
+        results.stream()
+               .flatMap(res -> res.failures.stream())
+               .forEach(err -> {
+                   LOGGER.info("Populate stream error from tasks. {}", err);
+                   failureHandler.addFailure(err.failedRange, err.instance, err.errMsg);
+               });
     }
 
     public synchronized void updateFailureHandler(Range<BigInteger> failedRange, RingInstance instance, String reason)

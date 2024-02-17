@@ -22,6 +22,7 @@ package org.apache.cassandra.spark.bulkwriter;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -186,6 +187,7 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                                                              .mapToInt(res -> res.createdRestoreSlices.size())
                                                              .sum();
                 // report the number of objects persisted on s3
+                LOGGER.info("Notifying extension all objects have been persisted, totaling {} objects", objectsCount);
                 context.transportExtensionImplementation()
                        .onAllObjectsPersisted(objectsCount, rowCount, getElapsedTimeMillis());
                 writeValidator.failIfRingChanged();
@@ -193,7 +195,7 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                 ImportCompletionCoordinator.of(startTimeNanos, writerContext, context.dataTransferApi(),
                                                writeValidator, resultsAsBlobStreamResults,
                                                context.transportExtensionImplementation())
-                                           .waitForCompletion();
+                                            .waitForCompletion();
                 markRestoreJobAsSucceeded(context);
             });
         }
@@ -201,9 +203,17 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
         {
             DataTransportInfo transportInfo = writerContext.conf().getTransportInfo();
             LOGGER.error("Bulk Write Failed. {}", transportInfo, throwable);
-            onCloudStorageTransport(ctx -> abortRestoreJob(ctx, throwable));
-            throw new RuntimeException("Bulk Write to Cassandra has failed. " + transportInfo,
-                                       throwable);
+            RuntimeException failure = new RuntimeException("Bulk Write to Cassandra has failed. " + transportInfo, throwable);
+            try
+            {
+                onCloudStorageTransport(ctx -> abortRestoreJob(ctx, throwable));
+            }
+            catch (RuntimeException rte)
+            {
+                failure.addSuppressed(rte);
+            }
+
+            throw failure;
         }
         finally
         {
@@ -216,6 +226,7 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
             }
             catch (Exception ignored)
             {
+                LOGGER.warn("Ignored exception during spark job shutdown.", ignored);
                 // We've made our best effort to close the Bulk Writer context
             }
         }
@@ -343,15 +354,17 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
     private void markRestoreJobAsSucceeded(TransportContext.CloudStorageTransportContext context)
     {
         UpdateRestoreJobRequestPayload requestPayload = new UpdateRestoreJobRequestPayload(null, null, RestoreJobStatus.SUCCEEDED, null);
+        UUID jobId = context.job().getRestoreJobId();
         try
         {
+            LOGGER.info("Marking the restore job as succeeded. jobId={}", jobId);
             // Prioritize the call to extension, so onJobSucceeded is always invoked.
             context.transportExtensionImplementation().onJobSucceeded(getElapsedTimeMillis());
             context.dataTransferApi().updateRestoreJob(requestPayload);
         }
         catch (Exception e)
         {
-            LOGGER.warn("Failed to mark the restore job as succeeded. jobId={}", context.job().getRestoreJobId(), e);
+            LOGGER.warn("Failed to mark the restore job as succeeded. jobId={}", jobId, e);
             // Do not rethrow - avoid triggering the catch block at the call-site that marks job as failed.
         }
     }
@@ -361,13 +374,15 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
         // Prioritize the call to extension, so onJobFailed is always invoked.
         context.transportExtensionImplementation().onJobFailed(getElapsedTimeMillis(), cause);
         // TODO: it should wait for all individual slices to be cancelled after aborting the job?
+        UUID jobId = context.job().getRestoreJobId();
         try
         {
+            LOGGER.info("Aborting job. jobId={}", jobId);
             context.dataTransferApi().abortRestoreJob();
         }
         catch (ClientException e)
         {
-            throw new RuntimeException("Failed to abort the restore job on Sidecar. jobId: " + context.job().getRestoreJobId(), e);
+            throw new RuntimeException("Failed to abort the restore job on Sidecar. jobId: " + jobId, e);
         }
     }
 }
