@@ -107,6 +107,7 @@ public class BulkSparkConf implements Serializable
     public static final String USE_OPENSSL                             = SETTING_PREFIX + "use_openssl";
     // defines the max number of consecutive retries allowed in the ring monitor
     public static final String RING_RETRY_COUNT                        = SETTING_PREFIX + "ring_retry_count";
+    public static final String IMPORT_COORDINATOR_TIMEOUT_MULTIPLIER   = SETTING_PREFIX + "importCoordinatorTimeoutMultiplier";
     public static final int MINIMUM_JOB_KEEP_ALIVE_MINUTES             = 10;
 
     public final transient Set<? extends SidecarInstance> sidecarInstances;
@@ -134,6 +135,7 @@ public class BulkSparkConf implements Serializable
     protected final SparkConf conf;
     public final int commitThreadsPerInstance;
     protected final int sidecarPort;
+    public final int importCoordinatorTimeoutMultiplier;
     protected boolean useOpenSsl;
     protected int ringRetryCount;
     protected final StorageClientConfig storageClientConfig;
@@ -174,6 +176,7 @@ public class BulkSparkConf implements Serializable
         // else fall back to props, and then default if neither specified
         this.useOpenSsl = getBoolean(USE_OPENSSL, true);
         this.ringRetryCount = getInt(RING_RETRY_COUNT, DEFAULT_RING_RETRY_COUNT);
+        this.importCoordinatorTimeoutMultiplier = getInt(IMPORT_COORDINATOR_TIMEOUT_MULTIPLIER, 2);
         this.ttl = MapUtils.getOrDefault(options, WriterOptions.TTL.name(), null);
         this.timestamp = MapUtils.getOrDefault(options, WriterOptions.TIMESTAMP.name(), null);
         int storageClientConcurrency = MapUtils.getInt(options, WriterOptions.STORAGE_CLIENT_CONCURRENCY.name(),

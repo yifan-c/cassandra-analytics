@@ -21,10 +21,19 @@ package org.apache.cassandra.spark.bulkwriter;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Range;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +43,7 @@ import org.apache.cassandra.sidecar.client.SidecarInstance;
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobDataTransferApi;
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobStreamResult;
 import org.apache.cassandra.spark.bulkwriter.blobupload.CreatedRestoreSlice;
+import org.apache.cassandra.spark.bulkwriter.util.ThreadUtil;
 import org.apache.cassandra.spark.data.ReplicationFactor;
 import org.apache.cassandra.spark.transports.storage.extensions.StorageTransportExtension;
 
@@ -44,8 +54,10 @@ import static org.apache.cassandra.spark.bulkwriter.blobupload.CreatedRestoreSli
 public final class ImportCompletionCoordinator
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(ImportCompletionCoordinator.class);
+
     private final long startTimeNanos;
     private final BulkWriterContext writerContext;
+    private final BulkSparkConf conf;
     private final BlobDataTransferApi dataTransferApi;
     private final BulkWriteValidator writeValidator;
     private final List<BlobStreamResult> blobStreamResultList;
@@ -53,7 +65,17 @@ public final class ImportCompletionCoordinator
     private final ReplicationFactor replicationFactor;
     private final StorageTransportExtension extension;
     private final CompletableFuture<Void> firstFailure = new CompletableFuture<>();
-    private final List<CompletableFuture<?>> results = new ArrayList<>();
+    private final CompletableFuture<Void> terminal = new CompletableFuture<>();
+    private final Map<CompletableFuture, RequestAndInstance> importFutures = new HashMap<>();
+    private final ScheduledExecutorService scheduler;
+    private final AtomicBoolean terminalScheduled = new AtomicBoolean(false);
+    private final AtomicInteger completedSlices = new AtomicInteger(0);
+
+    private long waitStartNanos;
+    private long minSliceSize = Long.MAX_VALUE;
+    private long maxSliceSize = Long.MIN_VALUE;
+    private int totalSlices;
+    private AtomicInteger satisfiedSlices;
 
     private ImportCompletionCoordinator(long startTimeNanos,
                                         BulkWriterContext writerContext, BlobDataTransferApi dataTransferApi,
@@ -62,12 +84,15 @@ public final class ImportCompletionCoordinator
     {
         this.startTimeNanos = startTimeNanos;
         this.writerContext = writerContext;
+        this.conf = writerContext.conf();
         this.job = writerContext.job();
         this.replicationFactor = writeValidator.replicationFactor();
         this.dataTransferApi = dataTransferApi;
         this.writeValidator = writeValidator;
         this.blobStreamResultList = blobStreamResultList;
         this.extension = extension;
+        ThreadFactory tf = ThreadUtil.threadFactory("Import completion timeout");
+        this.scheduler = Executors.newSingleThreadScheduledExecutor(tf);
     }
 
     public static ImportCompletionCoordinator of(long startTimeNanos,
@@ -95,69 +120,170 @@ public final class ImportCompletionCoordinator
     public void waitForCompletion()
     {
         writeValidator.setPhase("WaitForCommitCompletion");
-        BulkSparkConf conf = writerContext.conf();
+
+        try
+        {
+            waitForCompletionInternal();
+        }
+        finally
+        {
+            if (terminal.isDone())
+            {
+                LOGGER.info("Concluded the safe termination, given the specified consistency level is satisfied " +
+                            "and enough time has been blocked for importing slices.");
+            }
+            importFutures.keySet().forEach(f -> f.cancel(true));
+            terminal.complete(null);
+            scheduler.shutdownNow(); // shutdown and do not wait for the termination; the job is completing
+        }
+    }
+
+    private void waitForCompletionInternal()
+    {
+        prepareToPoll();
+
+        startPolling();
+
+        await();
+    }
+
+    private void prepareToPoll()
+    {
+        totalSlices = blobStreamResultList.stream().mapToInt(res -> res.createdRestoreSlices.size()).sum();
+        blobStreamResultList
+        .stream()
+        .flatMap(res -> res.createdRestoreSlices
+                        .stream()
+                        .map(CreatedRestoreSlice::sliceRequestPayload))
+        .mapToLong(slice -> {
+            // individual task should never return slice with 0-size bundle
+            long size = slice.compressedSizeOrZero();
+            if (size == 0)
+            {
+                throw new IllegalStateException("Found invalid slice with 0 compressed size. " +
+                                                "slice: " + slice);
+            }
+            return size;
+        })
+        .forEach(size -> {
+            minSliceSize = Math.min(minSliceSize, size);
+            maxSliceSize = Math.max(maxSliceSize, size);
+        });
+        satisfiedSlices = new AtomicInteger(0);
+        waitStartNanos = System.nanoTime();
+    }
+
+    private void startPolling()
+    {
         for (BlobStreamResult blobStreamResult : blobStreamResultList)
         {
             for (CreatedRestoreSlice createdRestoreSlice : blobStreamResult.createdRestoreSlices)
             {
                 for (RingInstance instance : blobStreamResult.passed)
                 {
-                    CompletableFuture<Void> fut = createSliceInstanceFuture(createdRestoreSlice,
-                                                                            instance,
-                                                                            conf);
-                    results.add(fut);
+                    createSliceInstanceFuture(createdRestoreSlice, instance, conf);
                 }
             }
         }
+    }
 
-        AtomicInteger counter = new AtomicInteger(0);
-        for (CompletableFuture<?> future : results)
-        {
-            future.whenComplete((v, t) -> LOGGER.info("Completed slice requests {}/{}",
-                                                      counter.incrementAndGet(), results.size()));
-        }
+    private void addCompletionMonitor(CompletableFuture<?> future)
+    {
+        // whenComplete callback will still be invoked when the future is cancelled.
+        // In such case, expect CancellationException
+        future.whenComplete((v, t) -> {
+            LOGGER.info("Completed slice requests {}/{}", completedSlices.incrementAndGet(), importFutures.keySet().size());
 
-        // the result either fail early once firstFailure future completes exceptionally, or the results list completes
-        CompletableFuture<?> result = CompletableFuture.anyOf(firstFailure, CompletableFuture.allOf(results.toArray(new CompletableFuture[0])));
-        result.join();
+            if (t instanceof CancellationException)
+            {
+                RequestAndInstance rai = importFutures.get(future);
+                LOGGER.info("Cancelled import. instance={} slice={}", rai.nodeFqdn, rai.requestPayload);
+                return;
+            }
+
+            // only enter the block once
+            if (satisfiedSlices.get() == totalSlices
+                && terminalScheduled.compareAndSet(false, true))
+            {
+                long timeToAllSatisfiedNanos = System.nanoTime() - waitStartNanos;
+                long timeout = estimateTimeout(timeToAllSatisfiedNanos);
+                LOGGER.info("The specified consistency level of the job has been satisfied. " +
+                            "Continuing to waiting on slices completion in order to prevent Cassandra side " +
+                            "streaming as much as possible. The estimated additional wait time is {} seconds.",
+                            TimeUnit.NANOSECONDS.toSeconds(timeout));
+                // schedule to complete the terminal
+                scheduler.schedule(() -> terminal.complete(null),
+                                   timeout, TimeUnit.NANOSECONDS);
+            }
+        });
+    }
+
+    private void await()
+    {
+        // the result either fail early once firstFailure future completes exceptionally, reached timeout (while CL is satisfied),
+        // or the results list completes
+        CompletableFuture.anyOf(firstFailure, terminal,
+                                CompletableFuture.allOf(importFutures.keySet().toArray(new CompletableFuture[0])))
+                         .join();
         // double check to make sure all slices are satisfied
         // Because at this point all ranges have been either satisfied or the job has already failed,
         // this is really just a sanity check for things like lost futures/future-introduced bugs
         validateAllRangesAreSatisfied();
     }
 
-    private CompletableFuture<Void> createSliceInstanceFuture(CreatedRestoreSlice createdRestoreSlice,
-                                                              RingInstance instance,
-                                                              BulkSparkConf conf)
+    // calculate the timeout based on the 1) time taken to have all slices satisfied, and 2) use import rate
+    private long estimateTimeout(long timeToAllSatisfiedNanos)
+    {
+        long timeout = timeToAllSatisfiedNanos;
+        // use the minSliceSize to get the slowest import rate. R = minSliceSize / T
+        // use the maxSliceSize to get the highest amount of time needed for import. D = maxSliceSize / R
+        // Please do not combine the two statements below for readability purpose
+        double estimatedRateFloor = ((double) minSliceSize) / timeToAllSatisfiedNanos;
+        double timeEstimateBasedOnRate = ((double) maxSliceSize) / estimatedRateFloor;
+        timeout = Math.max((long) timeEstimateBasedOnRate, timeout);
+        timeout = conf.importCoordinatorTimeoutMultiplier * timeout;
+        if (TimeUnit.NANOSECONDS.toHours(timeout) > 1)
+        {
+            LOGGER.warn("The estimated additional timeout is more than 1 hour. timeout={} seconds",
+                        TimeUnit.NANOSECONDS.toSeconds(timeout));
+        }
+        return timeout;
+    }
+
+    private void createSliceInstanceFuture(CreatedRestoreSlice createdRestoreSlice,
+                                           RingInstance instance,
+                                           BulkSparkConf conf)
     {
         if (firstFailure.isCompletedExceptionally())
         {
-            return CompletableFuture.completedFuture(null);
+            LOGGER.warn("The job has failed already. Skip sending import request. instance={} slice={}",
+                        instance.getNodeName(), createdRestoreSlice.sliceRequestPayload());
+            return;
         }
         SidecarInstance sidecarInstance = toSidecarInstance(instance, conf);
         CreateSliceRequestPayload createSliceRequestPayload = createdRestoreSlice.sliceRequestPayload();
         CompletableFuture<Void> fut = dataTransferApi.createRestoreSliceFromDriver(sidecarInstance,
                                                                                    createSliceRequestPayload);
-        return fut.handleAsync((ignored, throwable) -> {
+        fut = fut.handleAsync((ignored, throwable) -> {
             if (throwable == null)
             {
-                LOGGER.info("Slice import succeeded on instance. instance={} slice={}",
-                            instance.getNodeName(), createSliceRequestPayload);
                 handleSuccessfulSliceInstance(createdRestoreSlice, instance, createSliceRequestPayload);
             }
             else
             {
                 // use handle API to swallow the throwable on purpose; the throwable is set to `firstFailure`
-                handleFailedSliceInstance(instance, createSliceRequestPayload, firstFailure, results, throwable);
+                handleFailedSliceInstance(instance, createSliceRequestPayload, throwable);
             }
             return null;
         });
+        addCompletionMonitor(fut);
+        // Use the fut variable (, instead of the new future object from whenComplete) for key on purpose.
+        // So that whenComplete callback can receive CancellationException
+        importFutures.put(fut, new RequestAndInstance(createSliceRequestPayload, instance.getNodeName()));
     }
 
     private void handleFailedSliceInstance(RingInstance instance,
                                            CreateSliceRequestPayload createSliceRequestPayload,
-                                           CompletableFuture<Void> firstFailure,
-                                           List<CompletableFuture<?>> results,
                                            Throwable throwable)
     {
         LOGGER.warn("Import failed. instance={} slice={}", instance.getNodeName(), createSliceRequestPayload, throwable);
@@ -174,7 +300,6 @@ public final class ImportCompletionCoordinator
         {
             // record the first failure and cancel queued futures.
             firstFailure.completeExceptionally(rte);
-            results.forEach(f -> f.cancel(true));
         }
     }
 
@@ -182,13 +307,14 @@ public final class ImportCompletionCoordinator
                                                RingInstance instance,
                                                CreateSliceRequestPayload createSliceRequestPayload)
     {
-        LOGGER.info("Import succeeded. instance={} slice={}", createSliceRequestPayload, instance.getNodeName());
+        LOGGER.info("Import succeeded. instance={} slice={}", instance.getNodeName(), createSliceRequestPayload);
         createdRestoreSlice.addSucceededInstance(instance);
         if (SATISFIED ==
             createdRestoreSlice.checkForConsistencyLevel(job.getConsistencyLevel(),
                                                          replicationFactor,
                                                          job.getLocalDC()))
         {
+            satisfiedSlices.incrementAndGet();
             try
             {
                 extension.onObjectApplied(createSliceRequestPayload.bucket(),
@@ -235,6 +361,25 @@ public final class ImportCompletionCoordinator
                                            job.getRestoreJobId(), writeValidator.getPhase(), job.getConsistencyLevel(), unsatisfiedSlices);
             LOGGER.error(message);
             throw new RuntimeException(message);
+        }
+    }
+
+    @VisibleForTesting
+    Map<CompletableFuture, RequestAndInstance> importFutures()
+    {
+        return importFutures;
+    }
+
+    // simple data class to group the request and the node fqdn
+    static class RequestAndInstance
+    {
+        final String nodeFqdn;
+        final CreateSliceRequestPayload requestPayload;
+
+        RequestAndInstance(CreateSliceRequestPayload requestPayload, String nodeFqdn)
+        {
+            this.nodeFqdn = nodeFqdn;
+            this.requestPayload = requestPayload;
         }
     }
 }

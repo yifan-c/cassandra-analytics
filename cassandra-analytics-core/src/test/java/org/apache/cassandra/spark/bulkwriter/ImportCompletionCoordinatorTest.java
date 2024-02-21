@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -44,6 +45,7 @@ import org.apache.cassandra.sidecar.client.exception.RetriesExhaustedException;
 import org.apache.cassandra.sidecar.client.request.Request;
 import org.apache.cassandra.sidecar.common.data.QualifiedTableName;
 import org.apache.cassandra.sidecar.common.data.RingEntry;
+import org.apache.cassandra.spark.bulkwriter.ImportCompletionCoordinator.RequestAndInstance;
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobDataTransferApi;
 import org.apache.cassandra.spark.bulkwriter.blobupload.BlobStreamResult;
 import org.apache.cassandra.spark.bulkwriter.blobupload.CreatedRestoreSlice;
@@ -76,6 +78,8 @@ import static org.mockito.Mockito.when;
 
 public class ImportCompletionCoordinatorTest
 {
+    private static final int TOTAL_INSTANCES = 10;
+
     BulkWriterContext mockWriterContext;
     BulkWriteValidator writerValidator;
     CassandraRing<RingInstance> ring;
@@ -103,8 +107,8 @@ public class ImportCompletionCoordinatorTest
 
         CassandraContext mockCassandraContext = mock(CassandraContext.class);
         when(mockClusterInfo.getCassandraContext()).thenReturn(mockCassandraContext);
-        List<RingInstance> allInstances = new ArrayList<>(10);
-        for (int i = 0; i < 10; i++)
+        List<RingInstance> allInstances = new ArrayList<>(TOTAL_INSTANCES);
+        for (int i = 0; i < TOTAL_INSTANCES; i++)
         {
             allInstances.add(ringInstance(i, 10));
         }
@@ -211,18 +215,55 @@ public class ImportCompletionCoordinatorTest
                      "No object should be applied and reported");
     }
 
+    @Test
+    public void testAwaitShouldPassWithStuckSliceWhenClSatisfied()
+    {
+        /*
+         * When slice import is stuck on server side, i.e. import request never indicate the slice is complete.
+         * If the consistency level has been satisfied for all ranges, it is safe to ignore the abnormal status
+         * of the stuck slices.
+         * The test verifies that in such scenario, ImportCompletionCoordinator does not block forever,
+         * and it can conclude success result
+         */
+        List<BlobStreamResult> resultList = buildBlobStreamResultWithNoProgressImports(1);
+        ImportCompletionCoordinator coordinator = ImportCompletionCoordinator.of(0, mockWriterContext, dataTransferApi,
+                                                                                 writerValidator, resultList, mockExtension);
+        coordinator.waitForCompletion();
+        assertEquals(resultList.size(), appliedObjectKeys.getAllValues().size(),
+                     "All objects should be applied and reported for exactly once");
+        assertEquals(allTestObjectKeys(), new HashSet<>(appliedObjectKeys.getAllValues()));
+        Map<CompletableFuture, RequestAndInstance> importFutures = coordinator.importFutures();
+        int cancelledImports = importFutures.keySet().stream().mapToInt(f -> f.isCancelled() ? 1 : 0).sum();
+        assertEquals(TOTAL_INSTANCES, cancelledImports,
+                     "Each replica set should have a slice gets cancelled due to making no progress");
+    }
+
     private Set<String> allTestObjectKeys()
     {
         return IntStream.range(0, 10).boxed().map(i -> "key_for_instance_" + i).collect(Collectors.toSet());
+    }
+
+    private List<BlobStreamResult> buildBlobStreamResultWithNoProgressImports(int noProgressInstanceCount)
+    {
+        return buildBlobStreamResult(0, false, 0, noProgressInstanceCount);
+    }
+
+    private List<BlobStreamResult> buildBlobStreamResult(int failedInstanceCount, boolean simulateSlowImport, int unavailableInstanceCount)
+    {
+        return buildBlobStreamResult(failedInstanceCount, simulateSlowImport, unavailableInstanceCount, 0);
     }
 
     /**
      * @param failedInstanceCount number of instances in each replica set that fail the http request
      * @param simulateSlowImport slow import with artificial delay
      * @param unavailableInstanceCount number of instances in each replica set that is not included in the BlobStreamResult
+     * @param noProgressInstanceCount number of instances in each replica set that make no progress, i.e. future never complete
      * @return a list of blob stream result
      */
-    private List<BlobStreamResult> buildBlobStreamResult(int failedInstanceCount, boolean simulateSlowImport, int unavailableInstanceCount)
+    private List<BlobStreamResult> buildBlobStreamResult(int failedInstanceCount,
+                                                         boolean simulateSlowImport,
+                                                         int unavailableInstanceCount,
+                                                         int noProgressInstanceCount)
     {
         List<BlobStreamResult> resultList = new ArrayList<>();
         int totalInstances = 10;
@@ -235,6 +276,7 @@ public class ImportCompletionCoordinatorTest
             Set<CreatedRestoreSlice> createdRestoreSlices = new HashSet<>();
             int failedPerReplica = failedInstanceCount;
             int unavailablePerReplica = unavailableInstanceCount;
+            int noProgressPerReplicaSet = noProgressInstanceCount;
             // create one distinct slice per instance
             CreateSliceRequestPayload mockCreateSliceRequestPayload = mock(CreateSliceRequestPayload.class);
             when(mockCreateSliceRequestPayload.startToken()).thenReturn(BigInteger.valueOf(100 * i));
@@ -243,6 +285,7 @@ public class ImportCompletionCoordinatorTest
             when(mockCreateSliceRequestPayload.key()).thenReturn("key_for_instance_" + i); // to be captured by extension mock
             when(mockCreateSliceRequestPayload.bucket()).thenReturn("bucket"); // to be captured by extension mock
             when(mockCreateSliceRequestPayload.compressedSize()).thenReturn(1L); // to be captured by extension mock
+            when(mockCreateSliceRequestPayload.compressedSizeOrZero()).thenReturn(1L);
             List<RingInstance> passedReplicaSet = new ArrayList<>();
             for (RingInstance instance : replicaSet)
             {
@@ -259,6 +302,14 @@ public class ImportCompletionCoordinatorTest
                         Thread.sleep(ThreadLocalRandom.current().nextInt(2000));
                         return CompletableFuture.completedFuture(null);
                     })
+                    .when(dataTransferApi)
+                    .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
+                                                  eq(mockCreateSliceRequestPayload));
+                }
+                else if (noProgressPerReplicaSet-- > 0)
+                {
+                    // return a future that does complete
+                    doReturn(new CompletableFuture<>())
                     .when(dataTransferApi)
                     .createRestoreSliceFromDriver(eq(new SidecarInstanceImpl(instance.getNodeName(), 9043)),
                                                   eq(mockCreateSliceRequestPayload));
