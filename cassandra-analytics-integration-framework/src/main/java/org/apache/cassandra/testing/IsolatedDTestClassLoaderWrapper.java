@@ -44,6 +44,11 @@ public class IsolatedDTestClassLoaderWrapper
 {
     protected DTestJarClassLoader dtestJarClassLoader;
 
+    /**
+     * Initialize dtest jar class loader
+     * @param testVersion version to dtest jar
+     * @param clazz has to be a class in the cassandra-analytics-integration-framework package
+     */
     public void initializeDTestJarClassLoader(TestVersion testVersion, Class<?> clazz)
     {
         ClassLoader parent = Thread.currentThread().getContextClassLoader();

@@ -23,6 +23,7 @@ import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.Set;
 
+import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,6 +36,7 @@ import org.apache.cassandra.spark.validation.SidecarValidation;
 import org.apache.cassandra.spark.validation.StartupValidatable;
 import org.apache.cassandra.spark.validation.StartupValidator;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class CassandraContext implements StartupValidatable, Closeable
 {
@@ -42,19 +44,21 @@ public class CassandraContext implements StartupValidatable, Closeable
     @NotNull
     protected Set<SidecarInstance> clusterConfig;
     private final BulkSparkConf conf;
+    private final String clusterId;
     private final transient SidecarClient sidecarClient;
 
-    protected CassandraContext(BulkSparkConf conf)
+    protected CassandraContext(BulkSparkConf conf, @Nullable String clusterId)
     {
         this.conf = conf;
+        this.clusterId = clusterId;
         this.clusterConfig = createClusterConfig();
         this.sidecarClient = initializeSidecarClient(conf);
         LOGGER.debug("[{}] Created Cassandra Context", Thread.currentThread().getName());
     }
 
-    public static CassandraContext create(BulkSparkConf conf)
+    public static CassandraContext create(BulkSparkConf conf, @Nullable String clusterId)
     {
-        return new CassandraContext(conf);
+        return new CassandraContext(conf, clusterId);
     }
 
     public Set<SidecarInstance> getCluster()
@@ -88,7 +92,13 @@ public class CassandraContext implements StartupValidatable, Closeable
 
     protected Set<SidecarInstance> createClusterConfig()
     {
-        return conf.sidecarContactPoints();
+        if (clusterId == null)
+        {
+            return conf.sidecarContactPoints();
+        }
+
+        Preconditions.checkState(conf.isCoordinatedWriteConfigured(), "Expect CoordinatedWriteConfigured but not");
+        return conf.coordinatedWriteConf().cluster(clusterId).sidecarContactPoints();
     }
 
     public SidecarClient getSidecarClient()
@@ -98,7 +108,13 @@ public class CassandraContext implements StartupValidatable, Closeable
 
     public int sidecarPort()
     {
-        return conf.getEffectiveSidecarPort();
+        if (clusterId == null)
+        {
+            return conf.getEffectiveSidecarPort();
+        }
+
+        Preconditions.checkState(conf.isCoordinatedWriteConfigured(), "Expect CoordinatedWriteConfigured but not");
+        return conf.coordinatedWriteConf().cluster(clusterId).sidecarContactPoints().iterator().next().port();
     }
 
     protected BulkSparkConf conf()

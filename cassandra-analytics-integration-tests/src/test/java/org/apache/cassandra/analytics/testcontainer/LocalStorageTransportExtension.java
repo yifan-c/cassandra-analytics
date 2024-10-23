@@ -91,7 +91,7 @@ public class LocalStorageTransportExtension implements StorageTransportExtension
     {
     }
 
-    private StorageCredentialPair generateTokens()
+    static StorageCredentialPair generateTokens()
     {
         return new StorageCredentialPair("writeRegion",
                                          new StorageCredentials("writeKey",

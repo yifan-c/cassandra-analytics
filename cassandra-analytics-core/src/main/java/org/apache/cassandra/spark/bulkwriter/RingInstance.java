@@ -168,7 +168,7 @@ public class RingInstance implements CassandraInstance, Serializable
     @Override
     public String toString()
     {
-        return "Cluster=" + clusterId + ',' + ringEntry.toString();
+        return "RingInstance{cluster='" + clusterId + "', " + ringEntry.toString() + '}';
     }
 
     public RingEntry ringEntry()

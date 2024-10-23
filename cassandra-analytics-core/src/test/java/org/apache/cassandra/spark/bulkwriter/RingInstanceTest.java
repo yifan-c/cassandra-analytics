@@ -161,6 +161,22 @@ public class RingInstanceTest
         assertEquals(1, newErrorMap.keySet().size());
     }
 
+    @Test
+    public void testToString()
+    {
+        RingEntry ringEntry = mockRingEntry();
+        RingInstance instanceWithoutClusterId = new RingInstance(ringEntry);
+        assertEquals("RingInstance{cluster='null', " +
+                     "RingEntry{datacenter='DATACENTER1', address='127.0.0.1', port=0, rack='Rack', " +
+                     "status='UP', state='NORMAL', load='0', owns='', token='0', fqdn='DATACENTER1-i1', hostId=''}}",
+                     instanceWithoutClusterId.toString());
+
+        RingInstance instanceWithClusterId = new RingInstance(ringEntry, "clusterId");
+        assertEquals("RingInstance{cluster='clusterId', " +
+                     "RingEntry{datacenter='DATACENTER1', address='127.0.0.1', port=0, rack='Rack', " +
+                     "status='UP', state='NORMAL', load='0', owns='', token='0', fqdn='DATACENTER1-i1', hostId=''}}",
+                     instanceWithClusterId.toString());
+    }
 
 
     @NotNull

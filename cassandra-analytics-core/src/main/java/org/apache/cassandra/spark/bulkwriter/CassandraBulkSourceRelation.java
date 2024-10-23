@@ -226,6 +226,8 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                 context.transportExtensionImplementation()
                        .onAllObjectsPersisted(objectCount, rowCount, elapsedTimeMillis());
 
+                setSliceCountForRestoreJob(context, objectCount);
+
                 awaitImportCompletion(context, resultsAsCloudStorageStreamResults);
                 markRestoreJobAsSucceeded(context);
             });
@@ -376,7 +378,7 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
 
     private void extendLeaseForJob(TransportContext.CloudStorageTransportContext ctx)
     {
-        UpdateRestoreJobRequestPayload payload = new UpdateRestoreJobRequestPayload(null, null, null, updatedLeaseTime());
+        UpdateRestoreJobRequestPayload payload = UpdateRestoreJobRequestPayload.builder().withExpireAtInMillis(updatedLeaseTime()).build();
         try
         {
             ctx.dataTransferApi().updateRestoreJob(payload);
@@ -465,9 +467,25 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
         return o.a.c.sidecar.client.shaded.common.data.ConsistencyLevel.fromString(cl.toString());
     }
 
+    private void setSliceCountForRestoreJob(TransportContext.CloudStorageTransportContext context, long sliceCount)
+    {
+        UpdateRestoreJobRequestPayload requestPayload = UpdateRestoreJobRequestPayload.builder().withSliceCount(sliceCount).build();
+        UUID jobId = writerContext.job().getRestoreJobId();
+        try
+        {
+            LOGGER.info("Setting slice count for the restore job. jobId={} sliceCount={}", jobId, sliceCount);
+            context.dataTransferApi().updateRestoreJob(requestPayload);
+        }
+        catch (Exception e)
+        {
+            LOGGER.warn("Failed to set slice count for the restore job. jobId={}", jobId, e);
+            // Do not rethrow - avoid triggering the catch block at the call-site that marks job as failed.
+        }
+    }
+
     private void markRestoreJobAsSucceeded(TransportContext.CloudStorageTransportContext context)
     {
-        UpdateRestoreJobRequestPayload requestPayload = new UpdateRestoreJobRequestPayload(null, null, RestoreJobStatus.SUCCEEDED, null);
+        UpdateRestoreJobRequestPayload requestPayload = UpdateRestoreJobRequestPayload.builder().withStatus(RestoreJobStatus.SUCCEEDED).build();
         UUID jobId = writerContext.job().getRestoreJobId();
         try
         {

@@ -83,7 +83,7 @@ public class StorageTransportHandler implements CredentialChangeListener, Object
     {
         StorageTransportConfiguration conf = transportContext.transportConfiguration();
         RestoreJobSecrets secrets = credentialPair.toRestoreJobSecrets();
-        UpdateRestoreJobRequestPayload requestPayload = new UpdateRestoreJobRequestPayload(null, secrets, null, null);
+        UpdateRestoreJobRequestPayload requestPayload = UpdateRestoreJobRequestPayload.builder().withSecrets(secrets).build();
         if (clusterId != null)
         {
             CoordinatedCloudStorageDataTransferApi dataTransferApi = (CoordinatedCloudStorageDataTransferApi) transportContext.dataTransferApi();

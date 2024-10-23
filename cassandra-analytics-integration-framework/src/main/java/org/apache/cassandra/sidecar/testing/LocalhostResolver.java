@@ -41,7 +41,7 @@ public class LocalhostResolver implements DnsResolver
     private static final Pattern HOSTNAME_PATTERN = Pattern.compile("^localhost(\\d+)?$");
     private final DnsResolver delegate;
 
-    LocalhostResolver()
+    public LocalhostResolver()
     {
         this(DnsResolver.DEFAULT);
     }

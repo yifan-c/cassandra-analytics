@@ -512,7 +512,7 @@ public abstract class SharedClusterIntegrationTestBase
         return builder.build();
     }
 
-    static class IntegrationTestModule extends AbstractModule
+    public static class IntegrationTestModule extends AbstractModule
     {
         private static final Logger LOGGER = LoggerFactory.getLogger(IntegrationTestModule.class);
         private final Iterable<? extends IInstance> instances;
@@ -521,11 +521,11 @@ public abstract class SharedClusterIntegrationTestBase
         private final DnsResolver dnsResolver;
         private final Function<SidecarConfigurationImpl.Builder, SidecarConfigurationImpl.Builder> configurationOverrides;
 
-        IntegrationTestModule(Iterable<? extends IInstance> instances,
-                              IsolatedDTestClassLoaderWrapper wrapper,
-                              MtlsTestHelper mtlsTestHelper,
-                              DnsResolver dnsResolver,
-                              Function<SidecarConfigurationImpl.Builder, SidecarConfigurationImpl.Builder> configurationOverrides)
+        public IntegrationTestModule(Iterable<? extends IInstance> instances,
+                                     IsolatedDTestClassLoaderWrapper wrapper,
+                                     MtlsTestHelper mtlsTestHelper,
+                                     DnsResolver dnsResolver,
+                                     Function<SidecarConfigurationImpl.Builder, SidecarConfigurationImpl.Builder> configurationOverrides)
         {
             this.instances = instances;
             this.wrapper = wrapper;

@@ -31,6 +31,7 @@ import com.esotericsoftware.kryo.Kryo;
 import org.apache.cassandra.spark.bulkwriter.CassandraBulkWriterContext;
 import org.apache.cassandra.spark.bulkwriter.RingInstance;
 import org.apache.cassandra.spark.bulkwriter.TokenPartitioner;
+import org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated.CassandraCoordinatedBulkWriterContext;
 import org.apache.cassandra.spark.transports.storage.StorageAccessConfiguration;
 import org.apache.cassandra.spark.transports.storage.StorageCredentials;
 import org.apache.cassandra.spark.transports.storage.extensions.StorageTransportConfiguration;
@@ -46,6 +47,7 @@ public class SbwKryoRegistrator implements KryoRegistrator
     // CHECKSTYLE IGNORE: Despite being static and final, this is a mutable field not to be confused with a constant
     private static final Set<Class<? extends Serializable>> javaSerializableClasses =
     Sets.newHashSet(CassandraBulkWriterContext.class,
+                    CassandraCoordinatedBulkWriterContext.class,
                     TokenPartitioner.class,
                     RingInstance.class);
 

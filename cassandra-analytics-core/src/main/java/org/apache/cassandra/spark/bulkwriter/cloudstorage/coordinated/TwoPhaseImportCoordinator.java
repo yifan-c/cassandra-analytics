@@ -30,6 +30,7 @@ import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import o.a.c.sidecar.client.shaded.common.data.ConsistencyVerificationResult;
 import o.a.c.sidecar.client.shaded.common.data.RestoreJobProgressFetchPolicy;
 import o.a.c.sidecar.client.shaded.common.data.RestoreJobStatus;
 import o.a.c.sidecar.client.shaded.common.request.data.UpdateRestoreJobRequestPayload;
@@ -157,8 +158,6 @@ public class TwoPhaseImportCoordinator implements ImportBarrier, CoordinationSig
         pollForPhaseCompletion(importCompletedClusters,
                                extension::onApplySucceeded,
                                extension::onApplyFailed);
-        // once complete, advance to succeeded in all clusters.
-        sendCoordinationSignal(RestoreJobStatus.SUCCEEDED);
     }
 
     private void waitForStageReady()
@@ -199,7 +198,7 @@ public class TwoPhaseImportCoordinator implements ImportBarrier, CoordinationSig
 
     private void sendCoordinationSignal(RestoreJobStatus status)
     {
-        UpdateRestoreJobRequestPayload requestPayload = new UpdateRestoreJobRequestPayload(null, null, status, null);
+        UpdateRestoreJobRequestPayload requestPayload = UpdateRestoreJobRequestPayload.builder().withStatus(status).build();
         dataTransferApi.updateRestoreJob(requestPayload);
     }
 
@@ -210,13 +209,13 @@ public class TwoPhaseImportCoordinator implements ImportBarrier, CoordinationSig
                                            Set<String> completedClusters,
                                            BiConsumer<String, Throwable> failureHandler) throws ConsistencyNotSatisfiedException
     {
-        if (isSuccess(progress.message()))
+        if (progress.status() == ConsistencyVerificationResult.SATISFIED)
         {
             completedClusters.add(clusterId);
             return true;
         }
 
-        if (isPending(progress.message()))
+        if (progress.status() == ConsistencyVerificationResult.PENDING)
         {
             return false;
         }
@@ -229,17 +228,6 @@ public class TwoPhaseImportCoordinator implements ImportBarrier, CoordinationSig
         ConsistencyNotSatisfiedException exception = new ConsistencyNotSatisfiedException(error);
         failureHandler.accept(clusterId, exception);
         throw exception;
-    }
-
-    // TODO: update the RestoreJobProgressResponsePayload in Sidecar to include a field to tell the progress, in addition to the message field
-    private boolean isPending(String message)
-    {
-        return message.contains("One or more ranges are in progress. None of the ranges fail.");
-    }
-
-    private boolean isSuccess(String message)
-    {
-        return message.contains("All ranges have succeeded.");
     }
 
     private RestoreJobStatus determineReadyPhase()

@@ -161,7 +161,11 @@ public class BulkSparkConf implements Serializable
         this.userProvidedSidecarPort = sidecarPortFromOptions.isPresent() ? sidecarPortFromOptions.get() : getOptionalInt(SIDECAR_PORT).orElse(-1);
         this.effectiveSidecarPort = this.userProvidedSidecarPort == -1 ? DEFAULT_SIDECAR_PORT : this.userProvidedSidecarPort;
         this.sidecarContactPointsValue = resolveSidecarContactPoints(options);
-        this.sidecarContactPoints = sidecarContactPoints();
+        // Coordinated-write builds its own sidecar contact points, skip when enabled.
+        if (!options.containsKey(WriterOptions.COORDINATED_WRITE_CONFIG.name()))
+        {
+            this.sidecarContactPoints = sidecarContactPoints();
+        }
         this.keyspace = MapUtils.getOrThrow(options, WriterOptions.KEYSPACE.name());
         this.table = MapUtils.getOrThrow(options, WriterOptions.TABLE.name());
         this.skipExtendedVerify = MapUtils.getBoolean(options, WriterOptions.SKIP_EXTENDED_VERIFY.name(), true,
@@ -316,6 +320,11 @@ public class BulkSparkConf implements Serializable
         if (sidecarContactPointsValue != null)
         {
             LOGGER.warn("SIDECAR_CONTACT_POINTS or SIDECAR_INSTANCES are ignored on the presence of COORDINATED_WRITE_CONF");
+        }
+
+        if (userProvidedSidecarPort != -1)
+        {
+            LOGGER.warn("SIDECAR_PORT is ignored on the presence of COORDINATED_WRITE_CONF");
         }
 
         if (localDC != null)

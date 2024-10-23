@@ -58,6 +58,7 @@ import org.apache.cassandra.spark.exception.SidecarApiCallException;
 import org.apache.cassandra.spark.exception.TimeSkewTooLargeException;
 import org.apache.cassandra.spark.utils.CqlUtils;
 import org.apache.cassandra.spark.utils.FutureUtils;
+import org.jetbrains.annotations.Nullable;
 
 import static org.apache.cassandra.bridge.CassandraBridgeFactory.maybeQuotedIdentifier;
 
@@ -140,12 +141,12 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
      */
     protected CassandraContext buildCassandraContext()
     {
-        return buildCassandraContext(conf);
+        return buildCassandraContext(conf, clusterId);
     }
 
-    private static CassandraContext buildCassandraContext(BulkSparkConf conf)
+    private static CassandraContext buildCassandraContext(BulkSparkConf conf, @Nullable String clusterId)
     {
-        return CassandraContext.create(conf);
+        return CassandraContext.create(conf, clusterId);
     }
 
     @Override

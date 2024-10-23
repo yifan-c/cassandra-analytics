@@ -28,6 +28,7 @@ import java.util.function.Predicate;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.RateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,11 +63,13 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
     private static final Logger LOGGER = LoggerFactory.getLogger(CoordinatedCloudStorageDataTransferApi.class);
 
     private final MultiClusterContainer<CloudStorageDataTransferApiImpl> dataTransferApis = new MultiClusterContainer<>();
+    private final RateLimiter sidecarApiCallRateLimiter;
 
     public CoordinatedCloudStorageDataTransferApi(@NotNull Map<String, CloudStorageDataTransferApiImpl> dataTransferApiByCluster)
     {
         Preconditions.checkArgument(!dataTransferApiByCluster.isEmpty(), "dataTransferApiByCluster cannot be empty");
         this.dataTransferApis.addAll(dataTransferApiByCluster);
+        this.sidecarApiCallRateLimiter = RateLimiter.create(1); // todo: expose as configurable when needed
     }
 
     @Override
@@ -78,7 +81,9 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
     @Override
     public void forEach(BiConsumer<String, CloudStorageDataTransferApiImpl> action)
     {
-        forEachInternal(ignored -> true, action);
+        // do not skip any cluster
+        Predicate<String> allowAllClusters = id -> false;
+        forEachInternal(allowAllClusters, action);
     }
 
     @Override
@@ -192,8 +197,7 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
 
     private void forEachInternal(Consumer<CloudStorageDataTransferApiImpl> dataTransferApiConsumer)
     {
-        Predicate<String> allowAllClusters = id -> false;
-        forEachInternal(allowAllClusters, (ignored, api) -> dataTransferApiConsumer.accept(api));
+        forEach((ignored, api) -> dataTransferApiConsumer.accept(api));
     }
 
     // run dataTransferApiAction on the clusters that are not filtered by clusterIdFilter
@@ -207,6 +211,7 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
                 return;
             }
 
+            sidecarApiCallRateLimiter.acquire(1);
             try
             {
                 dataTransferApiAction.accept(clusterId, dataTransferApi);
