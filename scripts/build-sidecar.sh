@@ -44,7 +44,7 @@ if [ "x${LOCAL_SIDECAR_REPO}" != "x" ]; then
 else
   SIDECAR_REPO="${SIDECAR_REPO:-https://github.com/apache/cassandra-sidecar.git}"
   SIDECAR_BRANCH="${SIDECAR_BRANCH:-trunk}"
-  SIDECAR_COMMIT="${SIDECAR_COMMIT:-f07e248d0ce8303a06daf93b462190ef7be7304d}"
+  SIDECAR_COMMIT="${SIDECAR_COMMIT:-213274b82fb4dda98a028de7cd131371b4c1d826}"
 
   if [[ "$CLEAN" == "true" ]]; then
     echo "Clean up $SIDECAR_BUILD_DIR and $SIDECAR_JAR_DIR/org/apache/cassandra/(cassandra-)sidecar directories"
