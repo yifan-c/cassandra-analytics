@@ -77,7 +77,7 @@ public class CassandraCloudStorageTransportContext implements TransportContext.C
         Objects.requireNonNull(storageTransportConfiguration,
                                "Storage configuration cannot be null in order to upload to cloud");
         this.storageClient = new StorageClient(storageTransportConfiguration, conf.getStorageClientConfig());
-        this.dataTransferApi = createBlobDataTransferApi(storageClient);
+        this.dataTransferApi = createDataTransferApi(storageClient);
         Preconditions.checkState(!jobInfo.isCoordinatedWriteEnabled()
                                  || dataTransferApi instanceof CoordinatedCloudStorageDataTransferApi,
                                  "CoordinatedCloudStorageDataTransferApi must be created when coordinated write is enabled");
@@ -122,7 +122,7 @@ public class CassandraCloudStorageTransportContext implements TransportContext.C
     }
 
     // only invoke it in constructor
-    protected CloudStorageDataTransferApi createBlobDataTransferApi(StorageClient storageClient)
+    protected CloudStorageDataTransferApi createDataTransferApi(StorageClient storageClient)
     {
         return CloudStorageDataTransferApiFactory.INSTANCE
                .createDataTransferApi(storageClient, jobInfo, clusterInfo);
