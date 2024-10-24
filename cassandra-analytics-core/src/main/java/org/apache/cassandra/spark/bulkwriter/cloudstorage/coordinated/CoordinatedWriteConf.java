@@ -59,6 +59,7 @@ public class CoordinatedWriteConf
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     // The runtime type of ClusterConfProvider is erased; use clustersOf method to read the desired type back
     private final Map<String, ClusterConf> clusters;
+    private final String rawJson;
 
     /**
      * Parse JSON string and create a CoordinatedWriteConf object with the specified ClusterConfProvider format
@@ -75,7 +76,7 @@ public class CoordinatedWriteConf
         CoordinatedWriteConf result;
         try
         {
-            result = new CoordinatedWriteConf(OBJECT_MAPPER.readValue(json, javaType));
+            result = new CoordinatedWriteConf(json, OBJECT_MAPPER.readValue(json, javaType));
         }
         catch (Exception e)
         {
@@ -103,6 +104,20 @@ public class CoordinatedWriteConf
     public CoordinatedWriteConf(Map<String, ? extends ClusterConf> clusters)
     {
         this.clusters = Collections.unmodifiableMap(clusters);
+        try
+        {
+            this.rawJson = OBJECT_MAPPER.writeValueAsString(clusters);
+        }
+        catch (JsonProcessingException e)
+        {
+            throw new IllegalArgumentException("Input cannot be written as json string", e);
+        }
+    }
+
+    public CoordinatedWriteConf(String rawJson, Map<String, ? extends ClusterConf> clusters)
+    {
+        this.rawJson = rawJson;
+        this.clusters = Collections.unmodifiableMap(clusters);
     }
 
     public Map<String, ClusterConf> clusters()
@@ -129,9 +144,17 @@ public class CoordinatedWriteConf
         return (Map<String, T>) clusters;
     }
 
-    public String toJson() throws JsonProcessingException
+    public String toJson()
     {
-        return OBJECT_MAPPER.writeValueAsString(clusters);
+        return rawJson;
+    }
+
+    @Override
+    public String toString()
+    {
+        return "CoordinatedWriteConf{" +
+               "json=" + rawJson +
+               '}';
     }
 
     public interface ClusterConf

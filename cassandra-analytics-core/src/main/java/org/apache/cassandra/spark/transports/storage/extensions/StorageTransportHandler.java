@@ -62,7 +62,7 @@ public class StorageTransportHandler implements CredentialChangeListener, Object
                                  "ClusterId cannot be null for coordinated write enabled jobs");
         if (Objects.equals(transportContext.transportConfiguration().getStorageCredentialPair(clusterId), newCredentials))
         {
-            LOGGER.info("The received new credential is the same as the existing one. Skip updating. clusterId={}", clusterId);
+            LOGGER.info("The received credentials have not changed. Skip updating. clusterId={}", clusterId);
             return;
         }
 

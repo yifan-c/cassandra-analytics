@@ -54,7 +54,7 @@ class CloudStorageDataTransferApiFactoryTest
         .hasMessage("dataTransferApiByCluster cannot be empty");
 
         when(clusterInfo.clusterId()).thenReturn("clusterId");
-        CassandraClusterInfoGroup group = new CassandraClusterInfoGroup(Collections.singletonList(clusterInfo));
+        CassandraClusterInfoGroup group = CassandraClusterInfoGroup.createFrom(Collections.singletonList(clusterInfo));
         api = factory.createDataTransferApi(mock(StorageClient.class), mock(JobInfo.class), group);
         assertThat(api).isInstanceOf(CoordinatedCloudStorageDataTransferApi.class);
     }

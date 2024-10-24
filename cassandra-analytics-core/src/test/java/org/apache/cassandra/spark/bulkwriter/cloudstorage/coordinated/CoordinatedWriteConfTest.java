@@ -28,7 +28,6 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.cassandra.sidecar.client.SidecarInstance;
 import org.apache.cassandra.sidecar.client.SidecarInstanceImpl;
 import org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated.CoordinatedWriteConf.ClusterConf;
@@ -41,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class CoordinatedWriteConfTest
 {
     @Test
-    void testSerDeser() throws JsonProcessingException
+    void testSerDeser()
     {
         Map<String, SimpleClusterConf> clusters = new HashMap<>();
         clusters.put("cluster1", new SimpleClusterConf(Arrays.asList("instance-1:9999", "instance-2:9999", "instance-3:9999"), "dc1"));

@@ -20,12 +20,14 @@
 package org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.NoSuchElementException;
 
-import com.google.common.collect.ImmutableMap;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 
 class MultiClusterContainerTest
 {
@@ -45,7 +47,7 @@ class MultiClusterContainerTest
     void testReadAndWriteForMultiClusters()
     {
         MultiClusterContainer<Value> container = new MultiClusterContainer<>();
-        container.addAll(ImmutableMap.of("cluster1", new Value()));
+        container.addAll(Collections.singletonMap("cluster1", new Value()));
 
         assertThat(container.getValueOrNull("cluster1")).isNotNull();
         assertThat(container.getValueOrNull("cluster2")).isNull();
@@ -64,12 +66,12 @@ class MultiClusterContainerTest
         .isExactlyInstanceOf(IllegalStateException.class)
         .hasMessage("Cannot set value for non-null cluster when the container is used for non-coordinated-write");
 
-        assertThatThrownBy(() -> singleContainer.addAll(ImmutableMap.of("cluster1", new Value())))
+        assertThatThrownBy(() -> singleContainer.addAll(Collections.singletonMap("cluster1", new Value())))
         .isExactlyInstanceOf(IllegalStateException.class)
         .hasMessage("Cannot set value for non-null cluster when the container is used for non-coordinated-write");
 
         MultiClusterContainer<Value> multiClusterContainer = new MultiClusterContainer<>();
-        multiClusterContainer.addAll(ImmutableMap.of("cluster1", new Value()));
+        multiClusterContainer.addAll(Collections.singletonMap("cluster1", new Value()));
 
         assertThatThrownBy(() -> multiClusterContainer.setValue(null, new Value()))
         .isExactlyInstanceOf(IllegalStateException.class)
@@ -132,6 +134,10 @@ class MultiClusterContainerTest
             MultiClusterContainer<Value> container = new MultiClusterContainer<>();
             assertThat(container.getAnyValue()).isNull();
 
+            assertThatThrownBy(container::getAnyValueOrThrow)
+            .isInstanceOf(NoSuchElementException.class)
+            .hasMessage("No value is found");
+
             container.setValue(clusterId, new Value());
             assertThat(container.getAnyValue()).isNotNull();
         }
@@ -150,8 +156,37 @@ class MultiClusterContainerTest
         assertThat(container.size()).isEqualTo(2);
 
         container = new MultiClusterContainer<>();
+        // set value twice, but there should be one entry.
+        container.setValue(null, new Value());
         container.setValue(null, new Value());
         assertThat(container.size()).isOne();
+    }
+
+    @Test
+    void testForEach()
+    {
+        MultiClusterContainer<Value> container = new MultiClusterContainer<>();
+        container.forEach((clusterId, value) -> fail("should not reach here"));
+
+        container.setValue(null, new Value());
+        container.forEach((clusterId, v) -> assertThat(clusterId).isNull());
+
+        container = new MultiClusterContainer<>();
+        Value v1 = new Value();
+        Value v2 = new Value();
+        container.setValue("cluster1", v1);
+        container.setValue("cluster2", v2);
+        container.forEach((clusterId, value) -> {
+            assertThat(clusterId).isIn("cluster1", "cluster2");
+            if (clusterId.equals("cluster1"))
+            {
+                assertThat(value).isSameAs(v1);
+            }
+            else
+            {
+                assertThat(value).isSameAs(v2);
+            }
+        });
     }
 
     private static class Value

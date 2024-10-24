@@ -30,10 +30,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.util.concurrent.RateLimiter;
 import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import o.a.c.sidecar.client.shaded.common.data.ConsistencyVerificationResult;
 import o.a.c.sidecar.client.shaded.common.response.data.RestoreJobProgressResponsePayload;
 import org.apache.cassandra.spark.bulkwriter.CassandraContext;
 import org.apache.cassandra.spark.bulkwriter.ClusterInfo;
@@ -102,7 +104,7 @@ class TwoPhaseImportCoordinatorTest
 
         mockWriterContext = mock(CassandraCoordinatedBulkWriterContext.class);
 
-        CassandraClusterInfoGroup clusterInfoGroup = new CassandraClusterInfoGroup(Arrays.asList(mockCluster(clusterId1), mockCluster(clusterId2)));
+        CassandraClusterInfoGroup clusterInfoGroup = CassandraClusterInfoGroup.createFrom(Arrays.asList(mockCluster(clusterId1), mockCluster(clusterId2)));
         when(mockWriterContext.cluster()).thenReturn(clusterInfoGroup);
         when(mockWriterContext.job()).thenReturn(mockJobInfo);
 
@@ -267,18 +269,24 @@ class TwoPhaseImportCoordinatorTest
             when(api.jobInfo()).thenReturn(mockJobInfo);
             apiPerCluster.put(clusterId, api);
         }
-        CoordinatedCloudStorageDataTransferApi coordinatedApi = new CoordinatedCloudStorageDataTransferApi(apiPerCluster);
+        CoordinatedCloudStorageDataTransferApi coordinatedApi = new CoordinatedCloudStorageDataTransferApi(RateLimiter.create(1000), apiPerCluster);
         return spy(coordinatedApi);
     }
 
     private RestoreJobProgressResponsePayload completeJobProgress()
     {
-        return RestoreJobProgressResponsePayload.builder().withMessage("All ranges have succeeded.").build();
+        return RestoreJobProgressResponsePayload.builder()
+                                                .withStatus(ConsistencyVerificationResult.SATISFIED)
+                                                .withMessage("All ranges have succeeded.")
+                                                .build();
     }
 
     private RestoreJobProgressResponsePayload failedJobProgress()
     {
-        return RestoreJobProgressResponsePayload.builder().withMessage("One or more ranges have failed.").build();
+        return RestoreJobProgressResponsePayload.builder()
+                                                .withStatus(ConsistencyVerificationResult.FAILED)
+                                                .withMessage("One or more ranges have failed.")
+                                                .build();
     }
 
     // loop at most 10 times until the condition is evaluated to true

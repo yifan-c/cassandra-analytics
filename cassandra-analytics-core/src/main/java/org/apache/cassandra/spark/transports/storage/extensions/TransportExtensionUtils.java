@@ -35,7 +35,7 @@ public class TransportExtensionUtils
         String actualJobId = jobInfo.getId();
         if (!Objects.equals(receivedJobId, actualJobId))
         {
-            throw new IllegalStateException("Received jobId does not match with the actual one. Received: " + receivedJobId
+            throw new IllegalStateException("Received jobId does not match. Received: " + receivedJobId
                                             + "; actual: " + actualJobId);
         }
     }

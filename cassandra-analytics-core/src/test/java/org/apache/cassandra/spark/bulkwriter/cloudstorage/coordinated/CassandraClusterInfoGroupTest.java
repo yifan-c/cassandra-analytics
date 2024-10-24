@@ -34,6 +34,7 @@ import com.google.common.collect.Range;
 import org.junit.jupiter.api.Test;
 
 import o.a.c.sidecar.client.shaded.common.response.TokenRangeReplicasResponse;
+import org.apache.cassandra.spark.bulkwriter.BulkSparkConf;
 import org.apache.cassandra.spark.bulkwriter.CassandraClusterInfo;
 import org.apache.cassandra.spark.bulkwriter.CassandraClusterInfoTest;
 import org.apache.cassandra.spark.bulkwriter.ClusterInfo;
@@ -44,9 +45,11 @@ import org.apache.cassandra.spark.bulkwriter.token.TokenRangeMapping;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
 import org.apache.cassandra.spark.exception.TimeSkewTooLargeException;
 
+import static org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated.CassandraClusterInfoGroup.createFromBulkSparkConf;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -54,26 +57,6 @@ import static org.mockito.Mockito.when;
 
 class CassandraClusterInfoGroupTest
 {
-    @Test
-    void testCreateGroupFailWithEmptyList()
-    {
-        assertThatThrownBy(() -> new CassandraClusterInfoGroup(null))
-        .isExactlyInstanceOf(IllegalArgumentException.class)
-        .hasMessage("clusterInfos cannot be null or empty");
-
-        assertThatThrownBy(() -> new CassandraClusterInfoGroup(Collections.emptyList()))
-        .isExactlyInstanceOf(IllegalArgumentException.class)
-        .hasMessage("clusterInfos cannot be null or empty");
-    }
-
-    @Test
-    void testCreateGroupFailsIfClusterHasNoId()
-    {
-        assertThatThrownBy(() -> new CassandraClusterInfoGroup(Collections.singletonList(mock(ClusterInfo.class))))
-        .isExactlyInstanceOf(IllegalArgumentException.class)
-        .hasMessage("Found clusterInfo without clusterId defined");
-    }
-
     @Test
     void testLookupCluster()
     {
@@ -250,11 +233,43 @@ class CassandraClusterInfoGroupTest
 
     }
 
+    @Test
+    void testCreateClusterInfoListFailsDueToAbsentConfiguration()
+    {
+        BulkSparkConf conf = mock(BulkSparkConf.class);
+        assertThatThrownBy(() -> createFromBulkSparkConf(conf))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("CoordinatedWriteConf must present for CassandraCoordinatedBulkWriterContext");
+    }
+
+    @Test
+    void testCreateClusterInfoListFailsDueToEmptyConfiguration()
+    {
+        BulkSparkConf conf = mock(BulkSparkConf.class, RETURNS_DEEP_STUBS);
+        when(conf.coordinatedWriteConf().clusters()).thenReturn(Collections.emptyMap());
+        assertThatThrownBy(() -> createFromBulkSparkConf(conf))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("No cluster info is built from");
+    }
+
+    @Test
+    void testCreateClusterInfoListFailsDueToEmptyClusterId()
+    {
+        BulkSparkConf conf = mock(BulkSparkConf.class);
+        CoordinatedWriteConf.ClusterConf clusterConf = new CoordinatedWriteConf.SimpleClusterConf(Collections.singletonList("localhost:9043"), "localDc");
+        when(conf.coordinatedWriteConf()).thenReturn(new CoordinatedWriteConf(Collections.singletonMap("", clusterConf)));
+        assertThatThrownBy(() -> createFromBulkSparkConf(conf))
+        .isInstanceOf(IllegalStateException.class)
+        .describedAs("The exception message should include the original json to help spot the wrong configuration (empty clusterId)")
+        .hasMessage("Found coordinatedWriteConf with empty or null clusterId. " +
+                    "CoordinatedWriteConf{json={\"\":{\"sidecarContactPoints\":[\"localhost:9043\"],\"localDc\":\"localDc\"}}}");
+    }
+
     private CassandraClusterInfoGroup mockClusterGroup(int size,
                                                        Function<Integer, CassandraClusterInfo> clusterInfoCreator)
     {
         List<ClusterInfo> clusterInfos = IntStream.range(0, size).boxed().map(clusterInfoCreator).collect(Collectors.toList());
-        return new CassandraClusterInfoGroup(clusterInfos);
+        return CassandraClusterInfoGroup.createFrom(clusterInfos);
     }
 
     private CassandraClusterInfo mockClusterInfo(String clusterId)

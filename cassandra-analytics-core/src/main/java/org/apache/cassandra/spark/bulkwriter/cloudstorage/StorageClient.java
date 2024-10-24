@@ -123,7 +123,7 @@ public class StorageClient implements AutoCloseable
         }
         this.client = clientBuilder.build();
         this.dataChunker = new DataChunker(storageClientConfig.maxChunkSizeInBytes);
-        List<Tag> tags = this.storageTransportConfiguration.getTags()
+        List<Tag> tags = this.storageTransportConfiguration.getObjectTags()
                                                            .entrySet()
                                                            .stream()
                                                            .map(entry -> Tag.builder()

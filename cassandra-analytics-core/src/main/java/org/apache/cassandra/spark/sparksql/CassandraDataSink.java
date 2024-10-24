@@ -71,7 +71,7 @@ public class CassandraDataSink implements DataSourceRegister, CreatableRelationP
                 try
                 {
                     writerContext = factory().createBulkWriterContext(sqlContext.sparkContext(),
-                                                                      toJavaMap(parameters),
+                                                                      ScalaConversionUtils.<String, String>mapAsJavaMap(parameters),
                                                                       data.schema());
                     JobInfo jobInfo = writerContext.job();
                     CassandraBulkSourceRelation relation = new CassandraBulkSourceRelation(writerContext, sqlContext);
@@ -101,12 +101,5 @@ public class CassandraDataSink implements DataSourceRegister, CreatableRelationP
     protected BulkWriterContextFactory factory()
     {
         return new BulkWriterContextFactory();
-    }
-
-    // Util method to convert from Scala map to Java map. FQCN is used for code clarity.
-    private static java.util.Map<String, String> toJavaMap(scala.collection.immutable.Map<String, String> map)
-    {
-        // preserve the type arguments as required by jdk 1.8
-        return ScalaConversionUtils.<String, String>mapAsJavaMap(map);
     }
 }

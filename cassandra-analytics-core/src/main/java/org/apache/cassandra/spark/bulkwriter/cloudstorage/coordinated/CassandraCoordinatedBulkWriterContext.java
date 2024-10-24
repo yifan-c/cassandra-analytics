@@ -19,15 +19,11 @@
 
 package org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated;
 
-import java.util.List;
-import java.util.stream.Collectors;
-
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.StringUtils;
 
 import org.apache.cassandra.spark.bulkwriter.AbstractBulkWriterContext;
 import org.apache.cassandra.spark.bulkwriter.BulkSparkConf;
-import org.apache.cassandra.spark.bulkwriter.CassandraClusterInfo;
 import org.apache.cassandra.spark.bulkwriter.ClusterInfo;
 import org.apache.cassandra.spark.bulkwriter.DataTransport;
 import org.apache.spark.sql.types.StructType;
@@ -52,15 +48,13 @@ public class CassandraCoordinatedBulkWriterContext extends AbstractBulkWriterCon
         // Redundant check, since isCoordinatedWriteConfigured implies using S3_COMPAT mode already.
         // Having it here for clarity.
         Preconditions.checkArgument(conf.getTransportInfo().getTransport() == DataTransport.S3_COMPAT,
-                                    "CassandraCoordinatedBulkWriterContext only be created with " + DataTransport.S3_COMPAT);
+                                    "CassandraCoordinatedBulkWriterContext can only be created with " + DataTransport.S3_COMPAT);
     }
 
     @Override
     protected ClusterInfo buildClusterInfo()
     {
-        List<ClusterInfo> clusters = createClusterInfosForCoordinatedWrite(bulkSparkConf());
-        Preconditions.checkState(!clusters.isEmpty(), "No cluster info is built from the bulk writer option");
-        clusterInfoGroup = new CassandraClusterInfoGroup(clusters);
+        clusterInfoGroup = CassandraClusterInfoGroup.createFromBulkSparkConf(bulkSparkConf());
         clusterInfoGroup.startupValidate();
         return clusterInfoGroup;
     }
@@ -87,17 +81,5 @@ public class CassandraCoordinatedBulkWriterContext extends AbstractBulkWriterCon
                                      "Keyspace %s is not replicated on datacenter %s in %s",
                                      conf.keyspace, localDc, clusterId);
         });
-    }
-
-    static List<ClusterInfo> createClusterInfosForCoordinatedWrite(BulkSparkConf conf)
-    {
-        CoordinatedWriteConf coordinatedWriteConf = conf.coordinatedWriteConf();
-        Preconditions.checkArgument(coordinatedWriteConf != null,
-                                    "CoordinatedWriteConf must present for CassandraCoordinatedBulkWriterContext");
-        return coordinatedWriteConf.clusters()
-                                   .keySet()
-                                   .stream()
-                                   .map(clusterId -> new CassandraClusterInfo(conf, clusterId))
-                                   .collect(Collectors.toList());
     }
 }

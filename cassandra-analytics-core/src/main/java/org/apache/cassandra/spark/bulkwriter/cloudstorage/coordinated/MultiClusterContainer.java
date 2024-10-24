@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * A container to hold value per cluster. Each value is identified by its belonging cluster id.
+ * A container to hold values per cluster. Each value is identified by its belonging cluster id.
  * It is compatible with single cluster, i.e. no cluster id is defined for the value. Pass null clusterId to get the value.
  * However, the container does not permit holding values for both multi-cluster case and single cluster case;
  * otherwise, {@link IllegalStateException} is thrown.
@@ -42,19 +42,17 @@ import org.jetbrains.annotations.Nullable;
 public class MultiClusterContainer<T> implements Serializable, MultiClusterSupport<T>
 {
     private static final long serialVersionUID = 8387168256773834417L;
+    // A special key used by non-coordinated write
+    private static final Object SENTINEL_KEY = new Object();
 
-    // used by coordinated write
-    private final Map<String, T> byCluster = new ConcurrentHashMap<>();
-    // used by non-coordinated write
-    private T single = null;
+    // For coordinated write, the key should be String values of clusterId
+    private final Map<Object, T> byCluster = new ConcurrentHashMap<>();
 
     @Nullable
     @Override
     public T getValueOrNull(@Nullable String clusterId)
     {
-        return clusterId == null
-               ? single
-               : byCluster.get(clusterId);
+        return byCluster.get(key(clusterId));
     }
 
     /**
@@ -63,8 +61,8 @@ public class MultiClusterContainer<T> implements Serializable, MultiClusterSuppo
     @Nullable
     public T getAnyValue()
     {
-        T v = single;
-        if (v == null && !byCluster.isEmpty())
+        T v = null;
+        if (!byCluster.isEmpty())
         {
             v = byCluster.values().iterator().next();
         }
@@ -89,20 +87,22 @@ public class MultiClusterContainer<T> implements Serializable, MultiClusterSuppo
     @Override
     public int size()
     {
-        return single == null ? byCluster.size() : 1;
+        return byCluster.size();
     }
 
     @Override
     public void forEach(BiConsumer<String, T> action)
     {
-        if (single == null)
-        {
-            byCluster.forEach(action);
-        }
-        else
-        {
-            action.accept(null, single);
-        }
+        byCluster.forEach((key, value) -> {
+            if (key == SENTINEL_KEY)
+            {
+                action.accept(null, value);
+            }
+            else
+            {
+                action.accept((String) key, value);
+            }
+        });
     }
 
     /**
@@ -114,13 +114,13 @@ public class MultiClusterContainer<T> implements Serializable, MultiClusterSuppo
     {
         if (clusterId == null)
         {
-            Preconditions.checkState(byCluster.isEmpty(),
+            Preconditions.checkState(byCluster.isEmpty() || byCluster.containsKey(SENTINEL_KEY),
                                      "Cannot set value for null cluster when the container is used for coordinated-write");
-            single = value;
+            byCluster.put(SENTINEL_KEY, value);
         }
         else
         {
-            Preconditions.checkState(single == null,
+            Preconditions.checkState(!byCluster.containsKey(SENTINEL_KEY),
                                      "Cannot set value for non-null cluster when the container is used for non-coordinated-write");
             byCluster.put(clusterId, value);
         }
@@ -137,13 +137,13 @@ public class MultiClusterContainer<T> implements Serializable, MultiClusterSuppo
     {
         if (clusterId == null)
         {
-            Preconditions.checkState(byCluster.isEmpty(),
+            Preconditions.checkState(byCluster.isEmpty() || byCluster.containsKey(SENTINEL_KEY),
                                      "Cannot set value for null cluster when the container is used for coordinated-write");
-            single = valueUpdater.apply(single);
+            byCluster.compute(SENTINEL_KEY, (id, value) -> valueUpdater.apply(value));
         }
         else
         {
-            Preconditions.checkState(single == null,
+            Preconditions.checkState(!byCluster.containsKey(SENTINEL_KEY),
                                      "Cannot set value for non-null cluster when the container is used for non-coordinated-write");
             byCluster.compute(clusterId, (id, value) -> valueUpdater.apply(value));
         }
@@ -155,7 +155,7 @@ public class MultiClusterContainer<T> implements Serializable, MultiClusterSuppo
      */
     public void addAll(Map<String, T> clusters)
     {
-        Preconditions.checkState(single == null,
+        Preconditions.checkState(!byCluster.containsKey(SENTINEL_KEY),
                                  "Cannot set value for non-null cluster when the container is used for non-coordinated-write");
         byCluster.putAll(clusters);
     }
@@ -174,12 +174,17 @@ public class MultiClusterContainer<T> implements Serializable, MultiClusterSuppo
         }
 
         MultiClusterContainer<?> that = (MultiClusterContainer<?>) obj;
-        return Objects.equals(single, that.single) && Objects.equals(byCluster, that.byCluster);
+        return Objects.equals(byCluster, that.byCluster);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(single, byCluster);
+        return Objects.hash(byCluster);
+    }
+
+    private Object key(@Nullable String clusterId)
+    {
+        return clusterId == null ? SENTINEL_KEY : clusterId;
     }
 }

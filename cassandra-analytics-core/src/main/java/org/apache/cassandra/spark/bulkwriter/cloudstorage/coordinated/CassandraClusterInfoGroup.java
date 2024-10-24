@@ -33,12 +33,16 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Range;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.bridge.CassandraVersionFeatures;
+import org.apache.cassandra.spark.bulkwriter.BulkSparkConf;
+import org.apache.cassandra.spark.bulkwriter.CassandraClusterInfo;
 import org.apache.cassandra.spark.bulkwriter.CassandraContext;
 import org.apache.cassandra.spark.bulkwriter.ClusterInfo;
 import org.apache.cassandra.spark.bulkwriter.RingInstance;
@@ -66,9 +70,41 @@ public class CassandraClusterInfoGroup implements ClusterInfo, MultiClusterSuppo
     private transient volatile Map<String, ClusterInfo> clusterInfoById;
     private transient volatile TokenRangeMapping<RingInstance> consolidatedTokenRangeMapping;
 
-    public CassandraClusterInfoGroup(List<ClusterInfo> clusterInfos)
+    /**
+     * Creates {@link CassandraClusterInfoGroup} with the list of {@link ClusterInfo} from {@link BulkSparkConf} and validation
+     * The validation ensures non-empty list of {@link ClusterInfo}, where all objects have non-empty and unique clusterId
+     * @param conf bulk write conf
+     * @return new {@link CassandraClusterInfoGroup} instance
+     */
+    public static CassandraClusterInfoGroup createFromBulkSparkConf(BulkSparkConf conf)
     {
-        validateClusterInfoList(clusterInfos);
+        CoordinatedWriteConf coordinatedWriteConf = conf.coordinatedWriteConf();
+        Preconditions.checkArgument(coordinatedWriteConf != null,
+                                    "CoordinatedWriteConf must present for CassandraCoordinatedBulkWriterContext");
+        for (String clusterId : coordinatedWriteConf.clusters().keySet())
+        {
+            Preconditions.checkState(!StringUtils.isEmpty(clusterId),
+                                     "Found coordinatedWriteConf with empty or null clusterId. %s",
+                                     coordinatedWriteConf);
+        }
+        List<ClusterInfo> clusterInfos = coordinatedWriteConf
+                                         .clusters()
+                                         .keySet()
+                                         .stream()
+                                         .map(clusterId -> new CassandraClusterInfo(conf, clusterId))
+                                         .collect(Collectors.toList());
+        Preconditions.checkState(!clusterInfos.isEmpty(), "No cluster info is built from %s", coordinatedWriteConf);
+        return new CassandraClusterInfoGroup(clusterInfos);
+    }
+
+    @VisibleForTesting // ONLY FOR TESTING
+    public static CassandraClusterInfoGroup createFrom(List<ClusterInfo> clusterInfos)
+    {
+        return new CassandraClusterInfoGroup(clusterInfos);
+    }
+
+    private CassandraClusterInfoGroup(List<ClusterInfo> clusterInfos)
+    {
         this.clusterInfos = Collections.unmodifiableList(clusterInfos);
         buildClusterInfoById();
     }
@@ -275,15 +311,5 @@ public class CassandraClusterInfoGroup implements ClusterInfo, MultiClusterSuppo
     {
         LOGGER.error("Failed to perform action on cluster. cluster={}", clusterInfo.clusterId(), cause);
         return new RuntimeException("Failed to perform action on cluster: " + clusterInfo.clusterId(), cause);
-    }
-
-    private static void validateClusterInfoList(List<ClusterInfo> clusterInfos)
-    {
-        Preconditions.checkArgument(clusterInfos != null && !clusterInfos.isEmpty(),
-                                    "clusterInfos cannot be null or empty");
-        for (ClusterInfo ci : clusterInfos)
-        {
-            Preconditions.checkArgument(ci.clusterId() != null, "Found clusterInfo without clusterId defined");
-        }
     }
 }

@@ -394,13 +394,6 @@ public class KryoSerializationTests
     @Test
     public void testStorageTransportConfigurationWithMultiClusters()
     {
-        MultiClusterContainer<StorageAccessConfiguration> readAccesses = new MultiClusterContainer<>();
-        readAccesses.setValue("cluster1",
-                              new StorageAccessConfiguration("readRegion1", "readBucket",
-                                                             new StorageCredentials("keyId1", "secret1", "sessionToken1")));
-        readAccesses.setValue("cluster2",
-                              new StorageAccessConfiguration("readRegion2", "readBucket",
-                                                               new StorageCredentials("keyId1", "secret1", "sessionToken1")));
         StorageTransportConfiguration config = new StorageTransportConfiguration(
         "prefix",
         ImmutableMap.of("tag1", "tagVal1", "tag2", "tagVal2"),

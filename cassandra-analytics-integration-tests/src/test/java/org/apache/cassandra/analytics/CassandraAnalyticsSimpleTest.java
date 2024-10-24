@@ -19,13 +19,13 @@
 
 package org.apache.cassandra.analytics;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-import com.google.common.util.concurrent.Uninterruptibles;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -47,17 +47,16 @@ import static org.apache.cassandra.testing.TestUtils.TEST_KEYSPACE;
  */
 class CassandraAnalyticsSimpleTest extends SharedClusterSparkIntegrationTestBase
 {
+    private static final List<QualifiedName> QUALIFIED_NAMES = Arrays.asList(
+    new QualifiedName(TEST_KEYSPACE, "test_no_tll_timestamp"),
+    new QualifiedName(TEST_KEYSPACE, "test_ttl_1000"),
+    new QualifiedName(TEST_KEYSPACE, "test_timestamp"),
+    new QualifiedName(TEST_KEYSPACE, "test_ttl_1000_timestamp"));
+
     @ParameterizedTest
     @MethodSource("options")
     void runSampleJob(Integer ttl, Long timestamp, QualifiedName tableName)
     {
-        createTestTable(tableName, CREATE_TEST_TABLE_STATEMENT);
-
-        // The table is created in cassandra. However, sidecar keyspace endpoint relies on java driver to refresh schema,
-        // which introduces certain delay (1 second refresh interval).
-        // Wait for a while here to ensure sidecar is aware of schema.
-        Uninterruptibles.sleepUninterruptibly(2, TimeUnit.SECONDS);
-
         Map<String, String> writerOptions = new HashMap<>();
         if (ttl != null)
         {
@@ -93,6 +92,7 @@ class CassandraAnalyticsSimpleTest extends SharedClusterSparkIntegrationTestBase
     protected void initializeSchemaForTest()
     {
         createTestKeyspace(TEST_KEYSPACE, DC1_RF3);
+        QUALIFIED_NAMES.forEach(tableName -> createTestTable(tableName, CREATE_TEST_TABLE_STATEMENT));
     }
 
     @Override
@@ -105,10 +105,10 @@ class CassandraAnalyticsSimpleTest extends SharedClusterSparkIntegrationTestBase
     static Stream<Arguments> options()
     {
         return Stream.of(
-        Arguments.of(null, null, new QualifiedName(TEST_KEYSPACE, "test_no_tll_timestamp")),
-        Arguments.of(1000, null, new QualifiedName(TEST_KEYSPACE, "test_ttl_1000")),
-        Arguments.of(null, 1432815430948567L, new QualifiedName(TEST_KEYSPACE, "test_timestamp")),
-        Arguments.of(1000, 1432815430948567L, new QualifiedName(TEST_KEYSPACE, "test_ttl_1000_timestamp"))
+        Arguments.of(null, null, QUALIFIED_NAMES.get(0)),
+        Arguments.of(1000, null, QUALIFIED_NAMES.get(1)),
+        Arguments.of(null, 1432815430948567L, QUALIFIED_NAMES.get(2)),
+        Arguments.of(1000, 1432815430948567L, QUALIFIED_NAMES.get(3))
         );
     }
 

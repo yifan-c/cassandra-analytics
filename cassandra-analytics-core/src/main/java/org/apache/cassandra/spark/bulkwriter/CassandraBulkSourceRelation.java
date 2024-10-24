@@ -25,11 +25,11 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
-import javax.validation.constraints.NotNull;
 
 import com.google.common.base.Preconditions;
 import org.slf4j.Logger;
@@ -65,6 +65,7 @@ import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.sources.BaseRelation;
 import org.apache.spark.sql.sources.InsertableRelation;
 import org.apache.spark.sql.types.StructType;
+import org.jetbrains.annotations.NotNull;
 import scala.Tuple2;
 import scala.collection.JavaConverters;
 import scala.util.control.NonFatal$;
@@ -78,7 +79,7 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
     private final Broadcast<BulkWriterContext> broadcastContext;
     private final BulkWriteValidator writeValidator;
     private final SimpleTaskScheduler simpleTaskScheduler;
-    private volatile ImportBarrier importBarrier = null; // value is only set when using S3_COMPAT
+    private ImportBarrier importBarrier = null; // value is only set when using S3_COMPAT
     private long startTimeNanos;
 
     @SuppressWarnings("RedundantTypeArguments")
@@ -280,7 +281,7 @@ public class CassandraBulkSourceRelation extends BaseRelation implements Inserta
                                                            writeValidator, resultsAsCloudStorageStreamResults,
                                                            context.transportExtensionImplementation(), this::cancelJob);
         }
-        Preconditions.checkState(importBarrier != null, "importBarrier is not initialized");
+        Objects.requireNonNull(importBarrier, "importBarrier is not initialized");
         importBarrier.await();
     }
 

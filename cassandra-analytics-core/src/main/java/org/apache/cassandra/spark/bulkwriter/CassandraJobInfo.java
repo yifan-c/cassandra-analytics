@@ -52,7 +52,8 @@ public class CassandraJobInfo implements JobInfo
     {
         if (isCoordinatedWriteEnabled())
         {
-            throw new UnsupportedOperationException("Read localDc per cluster from coordinatedWriteConf, when coordinated write is enabled");
+            throw new UnsupportedOperationException("Method not supported, when coordinated write is enabled. " +
+                                                    "Call-sites should get localDc from #coordinatedWriteConf() method");
         }
         return conf.localDC;
     }

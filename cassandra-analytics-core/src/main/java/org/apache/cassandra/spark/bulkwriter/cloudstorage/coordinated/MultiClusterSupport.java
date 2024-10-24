@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
 public interface MultiClusterSupport<T>
 {
     /**
-     * @return count of all clusters
+     * @return the total number of clusters
      */
     int size();
 

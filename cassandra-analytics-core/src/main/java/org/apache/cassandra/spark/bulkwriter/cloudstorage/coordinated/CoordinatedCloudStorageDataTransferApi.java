@@ -67,9 +67,17 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
 
     public CoordinatedCloudStorageDataTransferApi(@NotNull Map<String, CloudStorageDataTransferApiImpl> dataTransferApiByCluster)
     {
+        // todo: expose rate limiter as configurable when needed
+        this(RateLimiter.create(1), dataTransferApiByCluster);
+    }
+
+    @VisibleForTesting
+    public CoordinatedCloudStorageDataTransferApi(RateLimiter sidecarApiCallRateLimiter,
+                                                  @NotNull Map<String, CloudStorageDataTransferApiImpl> dataTransferApiByCluster)
+    {
         Preconditions.checkArgument(!dataTransferApiByCluster.isEmpty(), "dataTransferApiByCluster cannot be empty");
         this.dataTransferApis.addAll(dataTransferApiByCluster);
-        this.sidecarApiCallRateLimiter = RateLimiter.create(1); // todo: expose as configurable when needed
+        this.sidecarApiCallRateLimiter = sidecarApiCallRateLimiter;
     }
 
     @Override
@@ -118,10 +126,10 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
 
     @Override
     public void restoreJobProgress(RestoreJobProgressFetchPolicy fetchPolicy,
-                                   Predicate<String> clusterIdFilter,
+                                   Predicate<String> shouldSkipCluster,
                                    BiConsumer<String, RestoreJobProgressResponsePayload> progressHandler) throws SidecarApiCallException
     {
-        forEachInternal(clusterIdFilter, (clusterId, dataTransferApi) -> {
+        forEachInternal(shouldSkipCluster, (clusterId, dataTransferApi) -> {
             restoreJobProgressInternal(clusterId, dataTransferApi, fetchPolicy, progressHandler);
         });
     }
@@ -200,12 +208,16 @@ public class CoordinatedCloudStorageDataTransferApi implements CloudStorageDataT
         forEach((ignored, api) -> dataTransferApiConsumer.accept(api));
     }
 
-    // run dataTransferApiAction on the clusters that are not filtered by clusterIdFilter
-    private void forEachInternal(Predicate<String> clusterIdFilter,
+    /**
+     * Run dataTransferApiAction on the clusters that are not skipped
+     * @param shouldSkipCluster if the predicate returns true, skip the cluster; otherwise, run dataTransferApiAction with the cluster
+     * @param dataTransferApiAction action that consumes clusterId and data transfer api
+     */
+    private void forEachInternal(Predicate<String> shouldSkipCluster,
                                  BiConsumer<String, CloudStorageDataTransferApiImpl> dataTransferApiAction)
     {
         dataTransferApis.forEach((clusterId, dataTransferApi) -> {
-            if (clusterIdFilter.test(clusterId))
+            if (shouldSkipCluster.test(clusterId))
             {
                 LOGGER.debug("Cluster is skipped according to clusterIdFilter. clusterId={}", clusterId);
                 return;

@@ -383,7 +383,7 @@ public final class ImportCompletionCoordinator implements ImportBarrier
         catch (RuntimeException rte)
         {
             // record the first failure and cancel queued futures.
-            setImportFailure(new ImportFailedException(rte));
+            setImportFailure(ImportFailedException.propagate(rte));
         }
     }
 

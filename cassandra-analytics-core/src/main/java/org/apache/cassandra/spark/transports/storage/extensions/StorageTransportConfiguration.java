@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
 public class StorageTransportConfiguration
 {
     private final String prefix;
-    private final Map<String, String> tags;
+    private final Map<String, String> objectTags;
     // many read access configurations
     private final MultiClusterContainer<StorageAccessConfiguration> readAccessConfigurations;
     // one write access configuration
@@ -49,9 +49,9 @@ public class StorageTransportConfiguration
                                          String readBucket, String readRegion,
                                          String prefix,
                                          StorageCredentialPair storageCredentialPair,
-                                         Map<String, String> tags)
+                                         Map<String, String> objectTags)
     {
-        this(prefix, tags,
+        this(prefix, objectTags,
              new StorageAccessConfiguration(writeRegion, writeBucket, storageCredentialPair.writeCredentials),
              new MultiClusterContainer<>());
         StorageAccessConfiguration readAccess = new StorageAccessConfiguration(readRegion, readBucket, storageCredentialPair.readCredentials);
@@ -60,23 +60,23 @@ public class StorageTransportConfiguration
 
     // Constructor for coordinated-write use case
     public StorageTransportConfiguration(String prefix,
-                                         Map<String, String> tags,
+                                         Map<String, String> objectTags,
                                          StorageAccessConfiguration writeAccessConfiguration,
                                          Map<String, StorageAccessConfiguration> readAccessConfigByCluster)
     {
-        this(prefix, tags, writeAccessConfiguration, new MultiClusterContainer<>());
+        this(prefix, objectTags, writeAccessConfiguration, new MultiClusterContainer<>());
         this.readAccessConfigurations.addAll(readAccessConfigByCluster);
     }
 
     private StorageTransportConfiguration(String prefix,
-                                          Map<String, String> tags,
+                                          Map<String, String> objectTags,
                                           StorageAccessConfiguration writeAccessConfiguration,
                                           MultiClusterContainer<StorageAccessConfiguration> readAccessConfigurations)
     {
         this.prefix = prefix;
         this.writeAccessConfiguration = writeAccessConfiguration;
         this.readAccessConfigurations = readAccessConfigurations;
-        this.tags = Collections.unmodifiableMap(tags);
+        this.objectTags = Collections.unmodifiableMap(objectTags);
     }
 
     public StorageAccessConfiguration writeAccessConfiguration()
@@ -99,7 +99,7 @@ public class StorageTransportConfiguration
      */
     public StorageCredentialPair getStorageCredentialPair(@Nullable String clusterId)
     {
-        StorageAccessConfiguration readAccess = readAccessConfigurations.getValueOrNull(clusterId);
+        StorageAccessConfiguration readAccess = readAccessConfigurations.getValueOrThrow(clusterId);
         return new StorageCredentialPair(writeAccessConfiguration.region(),
                                          writeAccessConfiguration.storageCredentials(),
                                          readAccess.region(),
@@ -121,9 +121,9 @@ public class StorageTransportConfiguration
         return prefix;
     }
 
-    public Map<String, String> getTags()
+    public Map<String, String> getObjectTags()
     {
-        return tags;
+        return objectTags;
     }
 
     public boolean equals(Object o)
@@ -138,14 +138,14 @@ public class StorageTransportConfiguration
         }
         StorageTransportConfiguration that = (StorageTransportConfiguration) o;
         return Objects.equals(prefix, that.prefix)
-               && Objects.equals(tags, that.tags)
+               && Objects.equals(objectTags, that.objectTags)
                && Objects.equals(writeAccessConfiguration, that.writeAccessConfiguration)
                && Objects.equals(readAccessConfigurations, that.readAccessConfigurations);
     }
 
     public int hashCode()
     {
-        return Objects.hash(prefix, tags, writeAccessConfiguration, readAccessConfigurations);
+        return Objects.hash(prefix, objectTags, writeAccessConfiguration, readAccessConfigurations);
     }
 
     public static class Serializer extends com.esotericsoftware.kryo.Serializer<StorageTransportConfiguration>
@@ -153,7 +153,7 @@ public class StorageTransportConfiguration
         public void write(Kryo kryo, Output out, StorageTransportConfiguration obj)
         {
             out.writeString(obj.prefix);
-            kryo.writeObject(out, obj.tags);
+            kryo.writeObject(out, obj.objectTags);
             kryo.writeObject(out, obj.writeAccessConfiguration);
             kryo.writeObject(out, obj.readAccessConfigurations);
         }
