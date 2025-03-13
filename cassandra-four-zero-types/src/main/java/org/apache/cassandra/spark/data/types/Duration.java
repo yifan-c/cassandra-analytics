@@ -20,15 +20,16 @@
 package org.apache.cassandra.spark.data.types;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 import org.apache.cassandra.bridge.CassandraVersion;
-import org.apache.cassandra.bridge.type.CqlDuration;
+import org.apache.cassandra.bridge.type.InternalDuration;
 import org.apache.cassandra.cql3.functions.types.DataType;
 import org.apache.cassandra.cql3.functions.types.SettableByIndexData;
 import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.marshal.DurationType;
 import org.apache.cassandra.db.marshal.ValueAccessor;
-import org.apache.cassandra.serializers.DurationSerializer;
 import org.apache.cassandra.serializers.MarshalException;
 import org.apache.cassandra.serializers.TypeSerializer;
 import org.apache.cassandra.spark.data.NativeType;
@@ -53,7 +54,7 @@ public class Duration extends NativeType
 
     public <T> TypeSerializer<T> serializer()
     {
-        return (TypeSerializer<T>) CalendarIntervalSerializer.INSTANCE;
+        return (TypeSerializer<T>) AnalyticsDurationSerializer.INSTANCE;
     }
 
     @Override
@@ -83,21 +84,23 @@ public class Duration extends NativeType
     @Override
     public Object convertForCqlWriter(Object value, CassandraVersion version, boolean isCollectionElement)
     {
-        CqlDuration cl = CqlDuration.from(value);
-        return isCollectionElement ? CalendarIntervalSerializer.toCql3FunctionDuration(cl) : CalendarIntervalSerializer.toCql3Duration(cl);
+        InternalDuration duration = (InternalDuration) value;
+        return isCollectionElement
+               ? AnalyticsDurationSerializer.toCql3FunctionDuration(duration)
+               : AnalyticsDurationSerializer.toCql3Duration(duration);
     }
 
     @Override
     protected void setInnerValueInternal(SettableByIndexData<?> udtValue, int position, @NotNull Object value)
     {
         org.apache.cassandra.cql3.functions.types.Duration duration = null;
-        if (value instanceof CqlDuration)
+        if (value instanceof InternalDuration)
         {
-            duration = CalendarIntervalSerializer.toCql3FunctionDuration((CqlDuration) value);
+            duration = AnalyticsDurationSerializer.toCql3FunctionDuration((InternalDuration) value);
         }
         else if (value instanceof org.apache.cassandra.cql3.Duration)
         {
-            duration = CalendarIntervalSerializer.toCql3FunctionDuration((org.apache.cassandra.cql3.Duration) value);
+            duration = AnalyticsDurationSerializer.toCql3FunctionDuration((org.apache.cassandra.cql3.Duration) value);
         }
         else
         {
@@ -109,12 +112,9 @@ public class Duration extends NativeType
     @Override
     public Object randomValue(int minCollectionSize)
     {
-        // returns CalendarInterval
-        return new CqlDuration(
-            RandomUtils.randomPositiveInt(100),
-            RandomUtils.randomPositiveInt(100),
-            // CalendarInterval does not support nanosecond precision
-            RandomUtils.randomPositiveInt(1000000) * 1000L).asCalendarInterval();
+        return new InternalDuration(RandomUtils.randomPositiveInt(100),
+                                    RandomUtils.randomPositiveInt(100),
+                                    TimeUnit.MICROSECONDS.toNanos(RandomUtils.randomPositiveInt(1000000)));
     }
 
     /**
@@ -122,72 +122,66 @@ public class Duration extends NativeType
      * Implementation note: {@code TypeSerializer<Object>} is used to prevent class cast exception from
      * {@code CalendarInterval}, which is not direct dependency of this module.
      */
-    public static class CalendarIntervalSerializer extends TypeSerializer<Object>
+    private static class AnalyticsDurationSerializer extends TypeSerializer<InternalDuration>
     {
-        private static final CalendarIntervalSerializer INSTANCE = new CalendarIntervalSerializer();
+        private static final AnalyticsDurationSerializer INSTANCE = new AnalyticsDurationSerializer();
 
-        public ByteBuffer serialize(Object value)
+        @Override
+        public ByteBuffer serialize(InternalDuration value)
         {
-            CqlDuration wrapper = CqlDuration.from(value);
-            org.apache.cassandra.cql3.Duration cqlDuration = toCql3Duration(wrapper);
-            return DurationSerializer.instance.serialize(cqlDuration);
+            org.apache.cassandra.cql3.Duration cqlDuration = toCql3Duration(value);
+            return org.apache.cassandra.serializers.DurationSerializer.instance.serialize(cqlDuration);
         }
 
-        public <V> Object deserialize(V v, ValueAccessor<V> valueAccessor)
+        public <V> InternalDuration deserialize(V v, ValueAccessor<V> valueAccessor)
         {
-            org.apache.cassandra.cql3.Duration cqlDuration = DurationSerializer.instance.deserialize(v, valueAccessor);
-            return fromCql3Duration(cqlDuration).asCalendarInterval();
+            org.apache.cassandra.cql3.Duration cqlDuration = org.apache.cassandra.serializers.DurationSerializer.instance.deserialize(v, valueAccessor);
+            return fromCql3Duration(cqlDuration);
         }
 
         public <V> void validate(V v, ValueAccessor<V> valueAccessor) throws MarshalException
         {
-            DurationSerializer.instance.validate(v, valueAccessor);
+            org.apache.cassandra.serializers.DurationSerializer.instance.validate(v, valueAccessor);
         }
 
-        public String toString(Object duration)
+        public String toString(InternalDuration duration)
         {
             return duration == null ? "" : duration.toString();
         }
 
-        public Class<Object> getType()
+        public Class<InternalDuration> getType()
         {
-            return Object.class;
+            return InternalDuration.class;
         }
 
-        public static org.apache.cassandra.cql3.Duration toCql3Duration(CqlDuration cl)
+        public static org.apache.cassandra.cql3.Duration toCql3Duration(InternalDuration duration)
         {
-            if (cl == null)
+            return nullOrConvert(duration, d -> org.apache.cassandra.cql3.Duration.newInstance(d.months, d.days, d.nanoseconds));
+        }
+
+        public static org.apache.cassandra.cql3.functions.types.Duration toCql3FunctionDuration(InternalDuration duration)
+        {
+            return nullOrConvert(duration, d -> org.apache.cassandra.cql3.functions.types.Duration.newInstance(d.months, d.days, d.nanoseconds));
+        }
+
+        public static org.apache.cassandra.cql3.functions.types.Duration toCql3FunctionDuration(org.apache.cassandra.cql3.Duration duration)
+        {
+            return nullOrConvert(duration, d -> org.apache.cassandra.cql3.functions.types.Duration.newInstance(d.getMonths(), d.getDays(), d.getNanoseconds()));
+        }
+
+        public static InternalDuration fromCql3Duration(org.apache.cassandra.cql3.Duration duration)
+        {
+            return nullOrConvert(duration, d -> new InternalDuration(d.getMonths(), d.getDays(), d.getNanoseconds()));
+        }
+
+        private static <I, O> O nullOrConvert(I input, Function<I, O> converter)
+        {
+            if (input == null)
             {
                 return null;
             }
-            return org.apache.cassandra.cql3.Duration.newInstance(cl.getMonths(), cl.getDays(), cl.getNanoseconds());
-        }
 
-        public static org.apache.cassandra.cql3.functions.types.Duration toCql3FunctionDuration(CqlDuration cl)
-        {
-            if (cl == null)
-            {
-                return null;
-            }
-            return org.apache.cassandra.cql3.functions.types.Duration.newInstance(cl.getMonths(), cl.getDays(), cl.getNanoseconds());
-        }
-
-        public static org.apache.cassandra.cql3.functions.types.Duration toCql3FunctionDuration(org.apache.cassandra.cql3.Duration d)
-        {
-            if (d == null)
-            {
-                return null;
-            }
-            return org.apache.cassandra.cql3.functions.types.Duration.newInstance(d.getMonths(), d.getDays(), d.getNanoseconds());
-        }
-
-        public static CqlDuration fromCql3Duration(org.apache.cassandra.cql3.Duration d)
-        {
-            if (d == null)
-            {
-                return null;
-            }
-            return new CqlDuration(d.getMonths(), d.getDays(), d.getNanoseconds());
+            return converter.apply(input);
         }
     }
 }

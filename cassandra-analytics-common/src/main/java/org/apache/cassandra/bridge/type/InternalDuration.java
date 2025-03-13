@@ -22,53 +22,21 @@ package org.apache.cassandra.bridge.type;
 import java.io.Serializable;
 import java.util.Objects;
 
-import org.apache.spark.unsafe.types.CalendarInterval;
-
 /**
- * Transfer object used to map between Spark {@code CalendarInterval} and CQL duration type.
- * We shall not introduce Spark dependency in Cassandra types module.
+ * Analytics-internal Duration type to bridge CQL Duration type.
  */
-public class CqlDuration implements Serializable
+public class InternalDuration implements Serializable
 {
-    private final int months;
-    private final int days;
-    private final long nanoseconds;
+    private static final long serialVersionUID = -6867844786318937949L;
+    public final int months;
+    public final int days;
+    public final long nanoseconds;
 
-    public CqlDuration(int months, int days, long nanoseconds)
+    public InternalDuration(int months, int days, long nanoseconds)
     {
         this.months = months;
         this.days = days;
         this.nanoseconds = nanoseconds;
-    }
-
-    public static CqlDuration from(Object value)
-    {
-        if (value instanceof CalendarInterval)
-        {
-            CalendarInterval cl = (CalendarInterval) value;
-            return new CqlDuration(cl.months, cl.days, cl.microseconds * 1000);
-        }
-        return (CqlDuration) value;
-    }
-
-    public Object asCalendarInterval()
-    {
-        return new CalendarInterval(months, days, nanoseconds / 1000);
-    }
-
-    public int getMonths()
-    {
-        return months;
-    }
-
-    public int getDays()
-    {
-        return days;
-    }
-
-    public long getNanoseconds()
-    {
-        return nanoseconds;
     }
 
     @Override
@@ -82,7 +50,7 @@ public class CqlDuration implements Serializable
         {
             return false;
         }
-        CqlDuration that = (CqlDuration) o;
+        InternalDuration that = (InternalDuration) o;
         return months == that.months &&
                days == that.days &&
                nanoseconds == that.nanoseconds;
@@ -97,6 +65,7 @@ public class CqlDuration implements Serializable
     @Override
     public String toString()
     {
+        // TODO: please add a unit test for this method
         StringBuilder builder = new StringBuilder();
         if (this.months < 0 || this.days < 0 || this.nanoseconds < 0L)
         {
