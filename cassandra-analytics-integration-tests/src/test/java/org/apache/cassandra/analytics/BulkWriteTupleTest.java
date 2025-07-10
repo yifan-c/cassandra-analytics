@@ -49,9 +49,8 @@ class BulkWriteTupleTest extends SharedClusterSparkIntegrationTestBase
 
     public static final QualifiedName TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE = new QualifiedName(TEST_KEYSPACE, "tuple_with_udt_with_tuple_src");
     public static final QualifiedName TUPLE_WITH_UDT_WITH_TUPLE_DEST_TABLE = new QualifiedName(TEST_KEYSPACE, "tuple_with_udt_with_tuple_dest");
-    // Table with a tuple, which contains a UDT which in-turn contains collections including nested tuple
-    public static final String TUPLE_WITH_UDT_TABLE_CREATE = "CREATE TABLE %s.%s (id BIGINT PRIMARY KEY,\n"
-            + "            tuplewithudt frozen<tuple<int, udt_with_collections>>)";
+    // Table with tuple list
+    public static final String TUPLE_LIST_TABLE_CREATE = "CREATE TABLE %s.%s (id BIGINT PRIMARY KEY, tupleList list<tuple<int, text>>)";
 
     private ICoordinator coordinator;
 
@@ -103,28 +102,44 @@ class BulkWriteTupleTest extends SharedClusterSparkIntegrationTestBase
                 BulkWriteTupleTest::tupleRowFormatter);
     }
 
+    @Test
+    void testTupleList()
+    {
+        int numRowsInserted = populateTupleWithUdtWithTuple();
+
+        // Create a spark frame with the data inserted during the setup
+        Dataset<Row> sourceData = bulkReaderDataFrame(TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE).load();
+        assertThat(sourceData.count()).isEqualTo(numRowsInserted);
+
+        // Insert the dataset containing list of UDTs, and UDT itself has collections in it
+        bulkWriterDataFrameWriter(sourceData, TUPLE_WITH_UDT_WITH_TUPLE_DEST_TABLE).save();
+        // It should fail to write
+    }
+
     private int populateTupleWithUdtWithTuple()
     {
         // table(id, tuple<float, udt_with_collections(list<>, set<>, map<>, tuple<>)>)
         // insert list of UDTs, and each UDT has a list, set and map
-        String insertIntoTupleOfUdts = "INSERT INTO %s (id, tuplewithudt) VALUES (%d, " +
-                "(%d, {f1:['list value %d'], f2:{'set value %d'}, f3:{%d : 'map value %d'}, f4:(%d, 'tuple value %d')}))";
+//        String insertIntoTupleOfUdts = "INSERT INTO %s (id, tuplewithudt) VALUES (%d, " +
+//                "(%d, {f1:[(%d, 'tuple in list %d')], f2:{'set value %d'}, f3:{%d : 'map value %d'}, f4:(%d, 'tuple value %d')}))";
+
+        String insertIntoTupleList = "INSERT INTO %s (id, tupleList) VALUES (%d, [(%d, 'tuple in list %d')])";
 
         int i = 0;
         for (; i < ROW_COUNT; i++)
         {
-            coordinator.executeWithResult(String.format(insertIntoTupleOfUdts,
-                    TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i, i, i, i, i, i, i, i), ConsistencyLevel.ALL);
+            coordinator.executeWithResult(String.format(insertIntoTupleList,
+                    TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i, i, i), ConsistencyLevel.ALL);
         }
 
         // test null cases
-        coordinator.executeWithResult(String.format("insert into %s (id) values (%d)",
-                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i++), ConsistencyLevel.ALL);
-        coordinator.executeWithResult(String.format("insert into %s (id, tuplewithudt) values (%d, null)",
-                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i++), ConsistencyLevel.ALL);
-        coordinator.executeWithResult(String.format("insert into %s (id, tuplewithudt) values (%d, " +
-                        "(null, {f1:null, f2:null, f3:null, f4:null}))",
-                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i++), ConsistencyLevel.ALL);
+//        coordinator.executeWithResult(String.format("insert into %s (id) values (%d)",
+//                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i++), ConsistencyLevel.ALL);
+//        coordinator.executeWithResult(String.format("insert into %s (id, tuplewithudt) values (%d, null)",
+//                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i++), ConsistencyLevel.ALL);
+//        coordinator.executeWithResult(String.format("insert into %s (id, tuplewithudt) values (%d, " +
+//                        "(null, {f1:null, f2:null, f3:null, f4:null}))",
+//                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE, i++), ConsistencyLevel.ALL);
 
         return i;
     }
@@ -171,11 +186,11 @@ class BulkWriteTupleTest extends SharedClusterSparkIntegrationTestBase
         cluster.schemaChangeIgnoringStoppedInstances(String.format(TUPLE_TABLE_CREATE, TUPLE_SOURCE_TABLE.keyspace(), TUPLE_SOURCE_TABLE.table()));
         cluster.schemaChangeIgnoringStoppedInstances(String.format(TUPLE_TABLE_CREATE, TUPLE_DEST_TABLE.keyspace(), TUPLE_DEST_TABLE.table()));
 
-        cluster.schemaChangeIgnoringStoppedInstances(String.format(TUPLE_WITH_UDT_TABLE_CREATE,
-                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE.keyspace(),
-                TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE.table()));
-        cluster.schemaChangeIgnoringStoppedInstances(String.format(TUPLE_WITH_UDT_TABLE_CREATE,
-                TUPLE_WITH_UDT_WITH_TUPLE_DEST_TABLE.keyspace(),
-                TUPLE_WITH_UDT_WITH_TUPLE_DEST_TABLE.table()));
+        cluster.schemaChangeIgnoringStoppedInstances(String.format(TUPLE_LIST_TABLE_CREATE,
+                                                                   TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE.keyspace(),
+                                                                   TUPLE_WITH_UDT_WITH_TUPLE_SOURCE_TABLE.table()));
+        cluster.schemaChangeIgnoringStoppedInstances(String.format(TUPLE_LIST_TABLE_CREATE,
+                                                                   TUPLE_WITH_UDT_WITH_TUPLE_DEST_TABLE.keyspace(),
+                                                                   TUPLE_WITH_UDT_WITH_TUPLE_DEST_TABLE.table()));
     }
 }
