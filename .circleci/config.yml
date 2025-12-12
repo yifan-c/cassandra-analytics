@@ -115,7 +115,7 @@ commands:
             # If no gradle processes exit with non-zero status, it will still be 0
             EXIT_STATUS=0
             for TEST_NAME in $CLASSNAMES; do
-                ./gradlew --stacktrace cassandra-analytics-integration-tests:test --tests $TEST_NAME --no-daemon || EXIT_STATUS=$?;
+                ./gradlew --stacktrace cassandra-analytics-integration-tests:test --info --tests $TEST_NAME --no-daemon || EXIT_STATUS=$?;
             done;
             exit $EXIT_STATUS
           no_output_timeout: 30m
