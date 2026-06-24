@@ -459,9 +459,11 @@ public class CassandraClusterInfo implements ClusterInfo, Closeable
     }
 
     /**
-     * Determines the bridge version from the highest SSTable version present on the cluster.
-     * This makes bridge selection independent of the Cassandra server version, and is used
-     * unless disabled via {@link BulkSparkConf#DISABLE_SSTABLE_VERSION_BASED_BRIDGE}.
+     * Determines the bridge version from the lowest SSTable version present on the cluster.
+     * Writing at the lowest version keeps the produced SSTables importable by every node (a node can
+     * import its own and older SSTable versions, but not newer ones). This makes bridge selection
+     * independent of the Cassandra server version, and is used unless disabled via
+     * {@link BulkSparkConf#DISABLE_SSTABLE_VERSION_BASED_BRIDGE}.
      *
      * @return a version string for the determined bridge (e.g. "5.0.0")
      */

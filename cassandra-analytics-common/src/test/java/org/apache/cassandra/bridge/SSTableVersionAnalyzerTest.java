@@ -56,8 +56,20 @@ public class SSTableVersionAnalyzerTest
         assertThat(SSTableVersionAnalyzer.determineBridgeVersionForRead(versions)).isEqualTo(expected);
     }
 
+    // For write, the lowest version is chosen (older SSTables import into newer nodes, not vice-versa).
+    static Stream<Arguments> lowestVersionCases()
+    {
+        return Stream.of(
+            Arguments.of(Collections.singleton("big-oa"), CassandraVersion.FIVEZERO),
+            Arguments.of(Collections.singleton("big-na"), CassandraVersion.FOURZERO),
+            Arguments.of(new HashSet<>(Arrays.asList("big-na", "big-nb")), CassandraVersion.FOURZERO),
+            Arguments.of(new HashSet<>(Arrays.asList("big-na", "big-oa")), CassandraVersion.FOURZERO),
+            Arguments.of(new HashSet<>(Arrays.asList("big-oa", "bti-da")), CassandraVersion.FIVEZERO)
+        );
+    }
+
     @ParameterizedTest
-    @MethodSource("highestVersionCases")
+    @MethodSource("lowestVersionCases")
     void testDetermineBridgeVersionForWrite(Set<String> versions, CassandraVersion expected)
     {
         assertThat(SSTableVersionAnalyzer.determineBridgeVersionForWrite(versions, "big")).isEqualTo(expected);
@@ -91,5 +103,27 @@ public class SSTableVersionAnalyzerTest
         assertThatThrownBy(() -> SSTableVersionAnalyzer.determineBridgeVersionForWrite(Collections.singleton("big-na"), "bti"))
             .isInstanceOf(UnsupportedOperationException.class)
             .hasMessageContaining("Cluster does not support requested SSTable format 'bti'");
+    }
+
+    // A cluster whose versions span beyond a single compatibility window (here 3.x + 5.0, where 5.0 cannot read
+    // 3.x SSTables) has no single bridge that can serve it, so both read and write must fail rather than pick one.
+    @Test
+    void testIncompatibleVersionsFailForRead()
+    {
+        Set<String> versions = new HashSet<>(Arrays.asList("big-mf", "big-oa"));
+        assertThatThrownBy(() -> SSTableVersionAnalyzer.determineBridgeVersionForRead(versions))
+            .isInstanceOf(UnsupportedOperationException.class)
+            .hasMessageContaining("not mutually compatible")
+            .hasMessageContaining("big-mf");
+    }
+
+    @Test
+    void testIncompatibleVersionsFailForWrite()
+    {
+        Set<String> versions = new HashSet<>(Arrays.asList("big-mf", "big-oa"));
+        assertThatThrownBy(() -> SSTableVersionAnalyzer.determineBridgeVersionForWrite(versions, "big"))
+            .isInstanceOf(UnsupportedOperationException.class)
+            .hasMessageContaining("not mutually compatible")
+            .hasMessageContaining("big-mf");
     }
 }

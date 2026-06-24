@@ -45,69 +45,6 @@ import static org.mockito.Mockito.when;
 public class CassandraDataLayerValidationTest
 {
     @Test
-    void testValidateSStableVersionsWithAllSupportedVersions()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-        Set<String> sstableVersions = new HashSet<>(Arrays.asList("big-na", "big-nb"));
-
-        assertThatNoException()
-        .describedAs("All versions are supported by FOURZERO")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO));
-    }
-
-    @Test
-    void testValidateSStableVersionsWithUnsupportedVersion()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-        // C* 4.0 cannot read C* 5.0 SSTable versions
-        Set<String> sstableVersions = new HashSet<>(Arrays.asList("big-na", "big-oa"));
-
-        assertThatThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessageContaining("Detected unsupported SSTable version(s)")
-        .hasMessageContaining("big-oa")
-        .hasMessageContaining("4.0")
-        .hasMessageContaining("set spark.cassandra_analytics.bridge.disable_sstable_version_based=true");
-    }
-
-    @Test
-    void testValidateSStableVersionsForFiveZeroWithBackwardCompatibility()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-        // C* 5.0 should be able to read C* 4.0 SSTable versions
-        Set<String> sstableVersions = new HashSet<>(Arrays.asList("big-na", "big-nb", "big-oa"));
-
-        assertThatNoException()
-        .describedAs("FIVEZERO should support reading FOURZERO versions")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FIVEZERO));
-    }
-
-    @Test
-    void testValidateSStableVersionsForFiveZeroWithBtiFormat()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-        Set<String> sstableVersions = new HashSet<>(Arrays.asList("big-oa", "bti-da"));
-
-        assertThatNoException()
-        .describedAs("FIVEZERO should support both big and bti formats")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FIVEZERO));
-    }
-
-    @Test
-    void testValidateSStableVersionsErrorMessageIncludesAllDetails()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-        Set<String> sstableVersions = new HashSet<>(List.of("big-oa"));
-
-        assertThatThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO))
-        .isInstanceOf(UnsupportedOperationException.class)
-        .hasMessageContaining("Detected unsupported SSTable version(s)")
-        .hasMessageContaining("Supported versions:")
-        .hasMessageContaining("Observed SSTable versions in the cluster:")
-        .hasMessageContaining("set spark.cassandra_analytics.bridge.disable_sstable_version_based=true");
-    }
-
-    @Test
     void testValidateSStableVersionsListWithValidVersions()
     {
         Set<String> expectedVersions = new HashSet<>(Arrays.asList("big-na", "big-nb"));
@@ -285,12 +222,6 @@ public class CassandraDataLayerValidationTest
             .isNotNull();
         assertThat(dataLayer.sstableVersionsOnCluster)
             .containsExactlyInAnyOrder("big-na", "big-oa");
-    }
-
-    private CassandraDataLayer createTestDataLayer()
-    {
-        // Use TestCassandraDataLayer to avoid SparkContext initialization in unit tests
-        return new TestCassandraDataLayer(null);
     }
 
     private CassandraDataLayer createTestDataLayerWithVersions(Set<String> sstableVersions)
