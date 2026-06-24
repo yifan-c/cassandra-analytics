@@ -105,8 +105,8 @@ public class SSTableVersionAnalyzerTest
             .hasMessageContaining("Cluster does not support requested SSTable format 'bti'");
     }
 
-    // A cluster whose versions span beyond a single compatibility window (here 3.x + 5.0, where 5.0 cannot read
-    // 3.x SSTables) has no single bridge that can serve it, so both read and write must fail rather than pick one.
+    // 3.0 + 5.0 spans beyond a single compatibility window (C* 5.0's lowest compatible version is 4.0, so it
+    // cannot read 3.0 SSTables). No single bridge can serve the cluster, so both read and write must fail.
     @Test
     void testIncompatibleVersionsFailForRead()
     {

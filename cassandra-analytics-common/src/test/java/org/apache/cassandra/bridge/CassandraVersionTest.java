@@ -78,10 +78,10 @@ public class CassandraVersionTest
         // C* 5.0 can read its own versions
         assertThat(supported).contains("big-oa", "bti-da");
 
-        // C* 5.0 can read C* 4.0 and 4.1 versions (previous major version family)
+        // C* 5.0 can read C* 4.0 and 4.1 versions (down to its lowest compatible version, 4.0)
         assertThat(supported).contains("big-na", "big-nb");
 
-        // C* 5.0 cannot read C* 3.0 versions (not in previous major version family)
+        // C* 5.0 cannot read C* 3.0 versions (older than its lowest compatible version)
         assertThat(supported).doesNotContain("big-ma", "big-mb", "big-mc", "big-md", "big-me", "big-mf");
     }
 
@@ -136,20 +136,6 @@ public class CassandraVersionTest
         // C* 4.1 did not introduce new native SSTable versions
         List<String> nativeVersions = CassandraVersion.FOURONE.getNativeSStableVersions();
         assertThat(nativeVersions).isEmpty();
-    }
-
-    @ParameterizedTest
-    @CsvSource({
-        "FIVEZERO, 40",
-        "FOURONE, 30",
-        "FOURZERO, 30",
-        "THREEZERO, 20"
-    })
-    void testGetPreviousMajorVersion(String versionName, int expectedPrevious)
-    {
-        CassandraVersion version = CassandraVersion.valueOf(versionName);
-        int previous = version.getPreviousMajorVersion();
-        assertThat(previous).isEqualTo(expectedPrevious);
     }
 
     @Test
