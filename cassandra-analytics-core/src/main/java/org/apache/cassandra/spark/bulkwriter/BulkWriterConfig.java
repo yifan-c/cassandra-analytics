@@ -21,7 +21,6 @@ package org.apache.cassandra.spark.bulkwriter;
 
 import java.io.Serializable;
 
-import org.apache.cassandra.bridge.CassandraVersion;
 import org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated.CassandraCoordinatedBulkWriterContext;
 import org.jetbrains.annotations.NotNull;
 
@@ -57,32 +56,31 @@ public class BulkWriterConfig implements Serializable
     // BroadcastableClusterInfo can be either BroadcastableCluster or BroadcastableClusterInfoGroup
     private final IBroadcastableClusterInfo clusterInfo;
     private final BroadcastableSchemaInfo schemaInfo;
-    // SSTable version-based bridge loading fields
-    private final CassandraVersion bridgeVersion;
+    private final String lowestCassandraVersion;
 
     /**
      * Creates a new immutable BulkWriterConfig with pre-computed values
      *
-     * @param conf                       Bulk writer Spark configuration
-     * @param sparkDefaultParallelism    Spark default parallelism setting
-     * @param jobInfo                    Broadcastable job information
-     * @param clusterInfo                Broadcastable cluster information (BroadcastableCluster or BroadcastableClusterInfoGroup)
-     * @param schemaInfo                 Broadcastable schema information
-     * @param bridgeVersion              Cassandra bridge version to use
+     * @param conf                    Bulk writer Spark configuration
+     * @param sparkDefaultParallelism Spark default parallelism setting
+     * @param jobInfo                 Broadcastable job information
+     * @param clusterInfo             Broadcastable cluster information (BroadcastableCluster or BroadcastableClusterInfoGroup)
+     * @param schemaInfo              Broadcastable schema information
+     * @param lowestCassandraVersion  Lowest Cassandra version in the cluster
      */
     public BulkWriterConfig(@NotNull BulkSparkConf conf,
                             int sparkDefaultParallelism,
                             @NotNull BroadcastableJobInfo jobInfo,
                             @NotNull IBroadcastableClusterInfo clusterInfo,
                             @NotNull BroadcastableSchemaInfo schemaInfo,
-                            @NotNull CassandraVersion bridgeVersion)
+                            @NotNull String lowestCassandraVersion)
     {
         this.conf = conf;
         this.sparkDefaultParallelism = sparkDefaultParallelism;
         this.jobInfo = jobInfo;
         this.clusterInfo = clusterInfo;
         this.schemaInfo = schemaInfo;
-        this.bridgeVersion = bridgeVersion;
+        this.lowestCassandraVersion = lowestCassandraVersion;
     }
 
     public BulkSparkConf getConf()
@@ -110,9 +108,9 @@ public class BulkWriterConfig implements Serializable
         return schemaInfo;
     }
 
-    public CassandraVersion getBridgeVersion()
+    public String getLowestCassandraVersion()
     {
-        return bridgeVersion;
+        return lowestCassandraVersion;
     }
 
     /**

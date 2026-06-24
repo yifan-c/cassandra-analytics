@@ -156,7 +156,7 @@ public class CassandraVersionTest
     void testConfiguredSSTableFormatDefault()
     {
         // Assuming no system property set, should return "big"
-        String format = CassandraVersion.configuredSSTableFormat();
+        String format = CassandraVersion.sstableFormat();
         assertThat(format).isNotNull();
         assertThat(format).isIn("big", "bti"); // Could be either depending on env
     }

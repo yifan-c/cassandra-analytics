@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,13 +33,13 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Range;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.cassandra.bridge.CassandraVersion;
 import org.apache.cassandra.bridge.CassandraVersionFeatures;
 import org.apache.cassandra.spark.bulkwriter.BulkSparkConf;
 import org.apache.cassandra.spark.bulkwriter.CassandraClusterInfo;
@@ -85,37 +84,35 @@ public class CassandraClusterInfoGroup implements ClusterInfo, MultiClusterSuppo
     private volatile TokenRangeMapping<RingInstance> consolidatedTokenRangeMapping;
     // Pre-computed values from BroadcastableClusterInfoGroup (only set when reconstructed on executors)
     private Partitioner cachedPartitioner;
+    private String cachedLowestCassandraVersion;
 
     /**
      * Creates {@link CassandraClusterInfoGroup} with the list of {@link ClusterInfo} from {@link BulkSparkConf} and validation
      * The validation ensures non-empty list of {@link ClusterInfo}, where all objects have non-empty and unique clusterId
      * @param conf bulk write conf
-     * @param bridgeVersion bridge version (nullable for preliminary construction)
      * @return new {@link CassandraClusterInfoGroup} instance
      */
-    public static CassandraClusterInfoGroup fromBulkSparkConf(BulkSparkConf conf, CassandraVersion bridgeVersion)
+    public static CassandraClusterInfoGroup fromBulkSparkConf(BulkSparkConf conf)
     {
-        return fromBulkSparkConf(conf, clusterId -> new CassandraClusterInfo(conf, clusterId, bridgeVersion));
+        return fromBulkSparkConf(conf, clusterId -> new CassandraClusterInfo(conf, clusterId));
     }
-
 
     /**
      * Reconstruct from BroadcastableClusterInfoGroup on executor.
      * Creates CassandraClusterInfo instances for each cluster that will fetch data from Sidecar.
-     * Leverages pre-computed values (partitioner, bridgeVersion) from the broadcastable
+     * Leverages pre-computed values (partitioner, lowestCassandraVersion) from the broadcastable
      * to avoid re-validation and re-computation on executors.
      *
      * @param broadcastable the broadcastable cluster info group from broadcast
      * @return new {@link CassandraClusterInfoGroup} instance
      */
-    public static CassandraClusterInfoGroup from(BroadcastableClusterInfoGroup broadcastable,
-                                                 CassandraVersion bridgeVersion)
+    public static CassandraClusterInfoGroup from(BroadcastableClusterInfoGroup broadcastable)
     {
-        return new CassandraClusterInfoGroup(broadcastable, bridgeVersion);
+        return new CassandraClusterInfoGroup(broadcastable);
     }
 
     /**
-     * Similar to {@link #fromBulkSparkConf(BulkSparkConf, CassandraVersion)} but takes additional function to create {@link ClusterInfo}
+     * Similar to {@link #fromBulkSparkConf(BulkSparkConf)} but takes additional function to create {@link ClusterInfo}
      */
     public static CassandraClusterInfoGroup fromBulkSparkConf(BulkSparkConf conf, Function<String, ClusterInfo> clusterInfoFactory)
     {
@@ -166,18 +163,19 @@ public class CassandraClusterInfoGroup implements ClusterInfo, MultiClusterSuppo
      * re-validation and re-computation on executors.
      *
      * @param broadcastable the broadcastable cluster info group from broadcast
-     * @param bridgeVersion the bridge version from broadcast
      */
-    private CassandraClusterInfoGroup(BroadcastableClusterInfoGroup broadcastable, CassandraVersion bridgeVersion)
+    private CassandraClusterInfoGroup(BroadcastableClusterInfoGroup broadcastable)
     {
         // Build list of ClusterInfo from broadcastable data
         List<ClusterInfo> clusterInfosList = new ArrayList<>();
-        broadcastable.forEach((clusterId, broadcastableInfo) -> clusterInfosList.add(
-                new CassandraClusterInfo((BroadcastableClusterInfo) broadcastableInfo, bridgeVersion)));
+        broadcastable.forEach((clusterId, broadcastableInfo) -> {
+            clusterInfosList.add(new CassandraClusterInfo((BroadcastableClusterInfo) broadcastableInfo));
+        });
         this.clusterInfos = Collections.unmodifiableList(clusterInfosList);
 
         // Extract pre-computed values from driver to avoid re-validation on executors
         this.cachedPartitioner = broadcastable.getPartitioner();
+        this.cachedLowestCassandraVersion = broadcastable.getLowestCassandraVersion();
         this.clusterId = broadcastable.clusterId();
         clusterInfoById();
     }
@@ -211,6 +209,38 @@ public class CassandraClusterInfoGroup implements ClusterInfo, MultiClusterSuppo
         }
 
         return consolidatedTokenRangeMapping;
+    }
+
+    /**
+     * @return the lowest cassandra version among all clusters
+     */
+    @Override
+    public String getLowestCassandraVersion()
+    {
+        // Return cached value if available (executor-side reconstruction)
+        if (cachedLowestCassandraVersion != null)
+        {
+            return cachedLowestCassandraVersion;
+        }
+
+        if (clusterInfos.size() == 1)
+        {
+            return clusterInfos.get(0).getLowestCassandraVersion();
+        }
+
+        Map<String, String> aggregated = applyOnEach(ClusterInfo::getLowestCassandraVersion);
+        List<CassandraVersionFeatures> versions = aggregated.values()
+                                                            .stream()
+                                                            .map(CassandraVersionFeatures::cassandraVersionFeaturesFromCassandraVersion)
+                                                            .sorted()
+                                                            .collect(Collectors.toList());
+        CassandraVersionFeatures first = versions.get(0);
+        CassandraVersionFeatures last = versions.get(versions.size() - 1);
+        Preconditions.checkState(first.getMajorVersion() == last.getMajorVersion(),
+                                 "Cluster versions are not compatible. lowest=%s and highest=%s",
+                                 first.getRawVersionString(), last.getRawVersionString());
+
+        return first.getRawVersionString();
     }
 
     @Override
@@ -368,62 +398,9 @@ public class CassandraClusterInfoGroup implements ClusterInfo, MultiClusterSuppo
         return new RuntimeException("Failed to perform action on cluster: " + clusterInfo.clusterId(), cause);
     }
 
-    /**
-     * Sets the bridge version on all contained CassandraClusterInfo instances.
-     *
-     * @param bridgeVersion the determined Cassandra bridge version
-     */
-    public void setBridgeVersion(CassandraVersion bridgeVersion)
+    @VisibleForTesting
+    Map<String, ClusterInfo> clusterInfoByIdUnsafe()
     {
-        for (ClusterInfo ci : clusterInfos)
-        {
-            ((CassandraClusterInfo) ci).setBridgeVersion(bridgeVersion);
-        }
-    }
-
-    /**
-     * Retrieves the lowest Cassandra version from all contained clusters.
-     *
-     * @return lowest Cassandra version string across all clusters
-     */
-    public String getLowestCassandraVersion()
-    {
-        Map<String, String> clusterVersions = new HashMap<>();
-        for (ClusterInfo ci : clusterInfos)
-        {
-            CassandraClusterInfo cci = (CassandraClusterInfo) ci;
-            clusterVersions.put(ci.clusterId(), cci.getLowestCassandraVersion());
-        }
-
-        // Find the lowest version across all clusters
-        List<CassandraVersionFeatures> versions = clusterVersions.values()
-                                                                 .stream()
-                                                                 .map(CassandraVersionFeatures::cassandraVersionFeaturesFromCassandraVersion)
-                                                                 .sorted()
-                                                                 .collect(Collectors.toList());
-
-        CassandraVersionFeatures first = versions.get(0);
-        CassandraVersionFeatures last = versions.get(versions.size() - 1);
-        Preconditions.checkState(first.getMajorVersion() == last.getMajorVersion(),
-                                 "Cluster versions are not compatible. lowest=%s and highest=%s",
-                                 first.getRawVersionString(), last.getRawVersionString());
-
-        return first.getRawVersionString();
-    }
-
-    /**
-     * Retrieves aggregated SSTable versions from all contained clusters.
-     *
-     * @return set of SSTable versions present across all clusters
-     */
-    public Set<String> getSSTableVersionsOnCluster()
-    {
-        Set<String> aggregatedSSTableVersions = new HashSet<>();
-        for (ClusterInfo ci : clusterInfos)
-        {
-            CassandraClusterInfo cci = (CassandraClusterInfo) ci;
-            aggregatedSSTableVersions.addAll(cci.getSSTableVersionsOnCluster());
-        }
-        return aggregatedSSTableVersions;
+        return clusterInfoById;
     }
 }

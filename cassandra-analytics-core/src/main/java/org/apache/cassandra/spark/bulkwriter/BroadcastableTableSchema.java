@@ -24,7 +24,6 @@ import java.util.List;
 
 import com.google.common.base.Preconditions;
 
-import org.apache.cassandra.bridge.CassandraVersion;
 import org.apache.cassandra.spark.common.schema.ColumnType;
 import org.jetbrains.annotations.NotNull;
 
@@ -59,7 +58,7 @@ public final class BroadcastableTableSchema implements Serializable
     private final WriteMode writeMode;
     private final TTLOption ttlOption;
     private final TimestampOption timestampOption;
-    private final CassandraVersion bridgeVersion;
+    private final String lowestCassandraVersion;
     private final boolean quoteIdentifiers;
 
     /**
@@ -81,7 +80,7 @@ public final class BroadcastableTableSchema implements Serializable
             source.writeMode,
             source.ttlOption,
             source.timestampOption,
-            source.bridgeVersion,
+            source.lowestCassandraVersion,
             source.quoteIdentifiers
         );
     }
@@ -95,7 +94,7 @@ public final class BroadcastableTableSchema implements Serializable
                                      WriteMode writeMode,
                                      TTLOption ttlOption,
                                      TimestampOption timestampOption,
-                                     CassandraVersion bridgeVersion,
+                                     String lowestCassandraVersion,
                                      boolean quoteIdentifiers)
     {
         this.createStatement = createStatement;
@@ -107,7 +106,7 @@ public final class BroadcastableTableSchema implements Serializable
         this.writeMode = writeMode;
         this.ttlOption = ttlOption;
         this.timestampOption = timestampOption;
-        this.bridgeVersion = bridgeVersion;
+        this.lowestCassandraVersion = lowestCassandraVersion;
         this.quoteIdentifiers = quoteIdentifiers;
     }
 
@@ -156,9 +155,9 @@ public final class BroadcastableTableSchema implements Serializable
         return timestampOption;
     }
 
-    public CassandraVersion getBridgeVersion()
+    public String getLowestCassandraVersion()
     {
-        return bridgeVersion;
+        return lowestCassandraVersion;
     }
 
     public boolean isQuoteIdentifiers()

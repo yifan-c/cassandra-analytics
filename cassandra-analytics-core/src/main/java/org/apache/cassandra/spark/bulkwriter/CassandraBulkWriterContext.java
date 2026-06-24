@@ -19,13 +19,11 @@
 
 package org.apache.cassandra.spark.bulkwriter;
 
-import java.util.Set;
 import java.util.UUID;
 
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.StringUtils;
 
-import org.apache.cassandra.bridge.CassandraVersion;
 import org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated.MultiClusterContainer;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.types.StructType;
@@ -40,13 +38,6 @@ import org.jetbrains.annotations.NotNull;
 // CHECKSTYLE IGNORE: This class cannot be declared as final, because consumers should be able to extend it
 public class CassandraBulkWriterContext extends AbstractBulkWriterContext
 {
-    // A temporary CassandraClusterInfo created with bridgeVersion=null during driver-side initialization.
-    // This preliminaryClusterInfo provides the Sidecar connectivity needed to determine the bridge version.
-    // Once bridge version is determined, buildClusterInfo() promotes this by setting its bridge version.
-    // Marked transient because it is only used during the driver-side constructor and must not be serialized
-    // when broadcasting to executors.
-    private transient CassandraClusterInfo preliminaryClusterInfo;
-
     protected CassandraBulkWriterContext(@NotNull BulkSparkConf conf,
                                          @NotNull StructType structType,
                                          int sparkDefaultParallelism)
@@ -66,34 +57,9 @@ public class CassandraBulkWriterContext extends AbstractBulkWriterContext
     }
 
     @Override
-    protected String getLowestCassandraVersion(@NotNull BulkSparkConf conf)
+    protected ClusterInfo buildClusterInfo()
     {
-        return getOrCreatePreliminaryClusterInfo(conf).getLowestCassandraVersion();
-    }
-
-    @Override
-    protected Set<String> getSSTableVersionsOnCluster(@NotNull BulkSparkConf conf)
-    {
-        return getOrCreatePreliminaryClusterInfo(conf).getSSTableVersionsOnCluster();
-    }
-
-    @Override
-    protected ClusterInfo buildClusterInfo(CassandraVersion bridgeVersion)
-    {
-        CassandraClusterInfo clusterInfo = getOrCreatePreliminaryClusterInfo(bulkSparkConf());
-        preliminaryClusterInfo = null;
-        clusterInfo.setBridgeVersion(bridgeVersion);
-        return clusterInfo;
-    }
-
-    private CassandraClusterInfo getOrCreatePreliminaryClusterInfo(BulkSparkConf conf)
-    {
-        if (preliminaryClusterInfo == null)
-        {
-            preliminaryClusterInfo = new CassandraClusterInfo(conf, null);
-        }
-
-        return preliminaryClusterInfo;
+        return new CassandraClusterInfo(bulkSparkConf());
     }
 
     @Override
@@ -129,6 +95,6 @@ public class CassandraBulkWriterContext extends AbstractBulkWriterContext
                                     broadcastableJobInfo,
                                     broadcastableClusterInfo,
                                     broadcastableSchemaInfo,
-                                    bridgeVersion());
+                                    lowestCassandraVersion());
     }
 }

@@ -355,35 +355,29 @@ public class CassandraDataLayer extends PartitionedDataLayer implements StartupV
     @VisibleForTesting
     protected CassandraVersion initializeSSTableVersionsAndBridgeVersion(String cassandraVersion)
     {
-        // Check if user has explicitly disabled SSTable version-based selection via Spark configuration
-        boolean isSSTableVersionBasedBridgeDisabled = isSSTableVersionBasedBridgeDisabled();
-
-        // Get SSTable versions from cluster only if SSTable version-based selection is enabled
-        // If disabled, use an empty set (never null) so downstream code - including executor-side
-        // validation and serialization - needs no null handling. On executors an empty set is the
-        // signal that the feature was disabled on the driver.
-        if (isSSTableVersionBasedBridgeDisabled)
+        // When disabled, fall back to cassandra.version and signal executors via an empty (never null)
+        // set, so executor-side validation and serialization need no null handling.
+        if (isSSTableVersionBasedBridgeDisabled())
         {
-            //Use a HashSet, because Kryo serializer reads back via kryo.readObject(in, HashSet.class)
+            // Use a HashSet, because Kryo serializer reads back via kryo.readObject(in, HashSet.class)
             this.sstableVersionsOnCluster = new HashSet<>();
+            return CassandraVersion.fromVersion(cassandraVersion)
+                                   .orElseThrow(() -> new UnsupportedOperationException("Unsupported Cassandra version: " + cassandraVersion));
         }
-        else
+
+        this.sstableVersionsOnCluster = retrieveSSTableVersionsFromCluster();
+        if (sstableVersionsOnCluster.isEmpty())
         {
-            this.sstableVersionsOnCluster = retrieveSSTableVersionsFromCluster();
+            throw new IllegalStateException(String.format(
+                "Unable to retrieve SSTable versions from cluster, required for SSTable version-based bridge selection. "
+                + "To bypass this check and use cassandra.version for bridge selection, set %s=true",
+                BulkSparkConf.DISABLE_SSTABLE_VERSION_BASED_BRIDGE));
         }
 
-        // Determine bridge version
-        CassandraVersion bridgeVersion = SSTableVersionAnalyzer.determineBridgeVersionForRead(
-            sstableVersionsOnCluster,
-            cassandraVersion,
-            isSSTableVersionBasedBridgeDisabled);
-
-        // Validate SSTable versions
-        validateSStableVersions(this.sstableVersionsOnCluster, bridgeVersion, isSSTableVersionBasedBridgeDisabled);
-
-        // Validate that Kryo registrator exists for this bridge version
+        CassandraVersion bridgeVersion = SSTableVersionAnalyzer.determineBridgeVersionForRead(sstableVersionsOnCluster);
+        validateSStableVersions(sstableVersionsOnCluster, bridgeVersion);
+        // Fail fast if Spark cannot serialize objects for the determined bridge
         KryoRegister.validateKryoRegistratorExists(bridgeVersion, cassandraVersion);
-
         return bridgeVersion;
     }
 
@@ -932,41 +926,17 @@ public class CassandraDataLayer extends PartitionedDataLayer implements StartupV
     }
 
     /**
-     * Validates that all SSTable versions are supported for the given Cassandra version.
+     * Validates that every SSTable version observed on the cluster can be read by the determined bridge version.
      * This validation runs on the Spark driver.
      *
      * @param sstableVersionsOnCluster set of SSTable versions across all nodes in the cluster
-     * @param cassandraVersion the Cassandra version
-     * @param isSSTableVersionBasedBridgeDisabled flag to disable sstable version based bridge determination
+     * @param bridgeVersion the determined bridge version
      * @throws UnsupportedOperationException if any unsupported SSTable version is detected
      */
     @VisibleForTesting
-    void validateSStableVersions(Set<String> sstableVersionsOnCluster,
-                                 CassandraVersion cassandraVersion,
-                                 boolean isSSTableVersionBasedBridgeDisabled)
+    void validateSStableVersions(Set<String> sstableVersionsOnCluster, CassandraVersion bridgeVersion)
     {
-        // Skip validation when fallback mode is enabled
-        if (isSSTableVersionBasedBridgeDisabled)
-        {
-            LOGGER.debug("Skipping SSTable version validation on driver - fallback mode enabled via {}=true",
-                         BulkSparkConf.DISABLE_SSTABLE_VERSION_BASED_BRIDGE);
-            return;
-        }
-
-        if (sstableVersionsOnCluster == null || sstableVersionsOnCluster.isEmpty())
-        {
-            // Fail fast with helpful error message
-            throw new IllegalStateException(String.format(
-            "Unable to retrieve SSTable versions from cluster. " +
-            "This is required for SSTable version-based bridge selection. " +
-            "If you want to bypass this check and use cassandra.version for bridge selection, " +
-            "set %s=true", BulkSparkConf.DISABLE_SSTABLE_VERSION_BASED_BRIDGE));
-        }
-
-        // Get SSTable versions that can be read by this Cassandra version
-        Set<String> supportedVersions = cassandraVersion.getSupportedSStableVersionsForRead();
-
-        // Find any unsupported versions
+        Set<String> supportedVersions = bridgeVersion.getSupportedSStableVersionsForRead();
         Set<String> unsupportedVersions = sstableVersionsOnCluster.stream()
                                                                   .filter(version -> !supportedVersions.contains(version))
                                                                   .collect(Collectors.toSet());
@@ -974,22 +944,17 @@ public class CassandraDataLayer extends PartitionedDataLayer implements StartupV
         if (!unsupportedVersions.isEmpty())
         {
             String errorMessage = String.format(
-            "Detected unsupported SSTable version(s) %s for Cassandra version %s. " +
-            "Supported versions: %s. " +
-            "Observed SSTable versions in the cluster: %s. " +
-            "To retry the job using a fallback Cassandra version, " +
-            "set %s=true",
-            unsupportedVersions,
-            cassandraVersion,
-            supportedVersions,
-            sstableVersionsOnCluster,
+            "Detected unsupported SSTable version(s) %s for bridge version %s. " +
+            "Supported versions: %s. Observed SSTable versions in the cluster: %s. " +
+            "To retry the job using a fallback Cassandra version, set %s=true",
+            unsupportedVersions, bridgeVersion.versionName(), supportedVersions, sstableVersionsOnCluster,
             BulkSparkConf.DISABLE_SSTABLE_VERSION_BASED_BRIDGE);
             LOGGER.error(errorMessage);
             throw new UnsupportedOperationException(errorMessage);
         }
 
-        LOGGER.debug("SSTable version validation successful. All observed versions {} are supported for Cassandra version {}",
-                     sstableVersionsOnCluster, cassandraVersion);
+        LOGGER.debug("SSTable version validation successful. All observed versions {} are supported by bridge version {}",
+                     sstableVersionsOnCluster, bridgeVersion.versionName());
     }
 
     /**

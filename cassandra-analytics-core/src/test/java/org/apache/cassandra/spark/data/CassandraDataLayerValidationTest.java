@@ -52,7 +52,7 @@ public class CassandraDataLayerValidationTest
 
         assertThatNoException()
         .describedAs("All versions are supported by FOURZERO")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO, false));
+        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO));
     }
 
     @Test
@@ -62,49 +62,12 @@ public class CassandraDataLayerValidationTest
         // C* 4.0 cannot read C* 5.0 SSTable versions
         Set<String> sstableVersions = new HashSet<>(Arrays.asList("big-na", "big-oa"));
 
-        assertThatThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO, false))
+        assertThatThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO))
         .isInstanceOf(UnsupportedOperationException.class)
         .hasMessageContaining("Detected unsupported SSTable version(s)")
         .hasMessageContaining("big-oa")
-        .hasMessageContaining("FOURZERO")
+        .hasMessageContaining("4.0")
         .hasMessageContaining("set spark.cassandra_analytics.bridge.disable_sstable_version_based=true");
-    }
-
-    @Test
-    void testValidateSStableVersionsWithNullVersionsThrowsException()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-
-        assertThatThrownBy(() -> dataLayer.validateSStableVersions(null, CassandraVersion.FOURZERO, false))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Unable to retrieve SSTable versions from cluster");
-    }
-
-    @Test
-    void testValidateSStableVersionsWithEmptyVersionsThrowsException()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-
-        assertThatThrownBy(() -> dataLayer.validateSStableVersions(Collections.emptySet(), CassandraVersion.FOURZERO, false))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Unable to retrieve SSTable versions from cluster");
-    }
-
-    @Test
-    void testValidateSStableVersionsSkipsValidationWhenFallbackEnabled()
-    {
-        CassandraDataLayer dataLayer = createTestDataLayer();
-
-        // Test with invalid versions - should not throw when fallback enabled
-        Set<String> invalidVersions = new HashSet<>(List.of("invalid-version"));
-        assertThatNoException()
-        .describedAs("Validation should be skipped with invalid versions when fallback mode is enabled")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(invalidVersions, CassandraVersion.FOURZERO, true));
-
-        // Test with null versions - should not throw when fallback enabled
-        assertThatNoException()
-        .describedAs("Validation should be skipped with null versions when fallback enabled")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(null, CassandraVersion.FOURZERO, true));
     }
 
     @Test
@@ -116,7 +79,7 @@ public class CassandraDataLayerValidationTest
 
         assertThatNoException()
         .describedAs("FIVEZERO should support reading FOURZERO versions")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FIVEZERO, false));
+        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FIVEZERO));
     }
 
     @Test
@@ -127,7 +90,7 @@ public class CassandraDataLayerValidationTest
 
         assertThatNoException()
         .describedAs("FIVEZERO should support both big and bti formats")
-        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FIVEZERO, false));
+        .isThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FIVEZERO));
     }
 
     @Test
@@ -136,7 +99,7 @@ public class CassandraDataLayerValidationTest
         CassandraDataLayer dataLayer = createTestDataLayer();
         Set<String> sstableVersions = new HashSet<>(List.of("big-oa"));
 
-        assertThatThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO, false))
+        assertThatThrownBy(() -> dataLayer.validateSStableVersions(sstableVersions, CassandraVersion.FOURZERO))
         .isInstanceOf(UnsupportedOperationException.class)
         .hasMessageContaining("Detected unsupported SSTable version(s)")
         .hasMessageContaining("Supported versions:")

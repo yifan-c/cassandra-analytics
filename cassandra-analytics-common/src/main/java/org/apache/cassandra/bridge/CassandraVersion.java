@@ -181,13 +181,13 @@ public enum CassandraVersion
         return (majorVersion - 1) * 10;
     }
 
-    private static final String configuredSSTableFormat;
+    private static final String sstableFormat;
     private static final CassandraVersion[] implementedVersions;
     private static final String[] supportedVersions;
 
     static
     {
-        configuredSSTableFormat = System.getProperty("cassandra.analytics.bridges.sstable_format", "big");
+        sstableFormat = System.getProperty("cassandra.analytics.bridges.sstable_format", "big");
 
         // NOTE: These default enum names must stay in sync with cassandraVersionEnumMap in build.gradle.
         // FOURONE is intentionally excluded from local-dev defaults to keep iteration fast;
@@ -196,7 +196,7 @@ public enum CassandraVersion
                                                               String.join(",", FOURZERO.name(), FIVEZERO.name()));
         implementedVersions = Arrays.stream(providedVersionsOrDefault.split(","))
                                     .map(CassandraVersion::valueOf)
-                                    .filter(v -> v.sstableFormats().contains(configuredSSTableFormat))
+                                    .filter(v -> v.sstableFormats().contains(sstableFormat))
                                     .toArray(CassandraVersion[]::new);
 
         // NOTE: These default versions must stay in sync with cassandraFullVersionMap in build.gradle.
@@ -204,7 +204,7 @@ public enum CassandraVersion
                                                                        "cassandra-4.0.17,cassandra-5.0.5");
         supportedVersions = Arrays.stream(providedSupportedVersionsOrDefault.split(","))
                                   .filter(version -> CassandraVersion.fromVersion(version)
-                                                                     .filter(v -> v.sstableFormats().contains(configuredSSTableFormat))
+                                                                     .filter(v -> v.sstableFormats().contains(sstableFormat))
                                                                      .isPresent())
                                   .toArray(String[]::new);
 
@@ -212,9 +212,9 @@ public enum CassandraVersion
                                     "No versions available");
     }
 
-    public static String configuredSSTableFormat()
+    public static String sstableFormat()
     {
-        return configuredSSTableFormat;
+        return sstableFormat;
     }
 
     public static Optional<CassandraVersion> fromVersion(String cassandraVersion)

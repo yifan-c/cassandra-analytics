@@ -19,13 +19,11 @@
 
 package org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated;
 
-import java.util.Set;
 import java.util.UUID;
 
 import com.google.common.base.Preconditions;
 import org.apache.commons.lang3.StringUtils;
 
-import org.apache.cassandra.bridge.CassandraVersion;
 import org.apache.cassandra.spark.bulkwriter.AbstractBulkWriterContext;
 import org.apache.cassandra.spark.bulkwriter.BroadcastableClusterInfoGroup;
 import org.apache.cassandra.spark.bulkwriter.BroadcastableJobInfo;
@@ -48,13 +46,6 @@ import org.jetbrains.annotations.NotNull;
  */
 public class CassandraCoordinatedBulkWriterContext extends AbstractBulkWriterContext
 {
-    // A temporary CassandraClusterInfoGroup created with bridgeVersion=null during driver-side initialization.
-    // This preliminaryGroup provides the Sidecar connectivity needed to determine the bridge version.
-    // Once bridge version is determined, buildClusterInfo() promotes this by setting its bridge version.
-    // Marked transient because it is only used during the driver-side constructor and must not be serialized
-    // when broadcasting to executors.
-    private transient CassandraClusterInfoGroup preliminaryGroup;
-
     public CassandraCoordinatedBulkWriterContext(@NotNull BulkSparkConf conf,
                                                  @NotNull StructType structType,
                                                  int sparkDefaultParallelism)
@@ -86,35 +77,11 @@ public class CassandraCoordinatedBulkWriterContext extends AbstractBulkWriterCon
     }
 
     @Override
-    protected String getLowestCassandraVersion(@NotNull BulkSparkConf conf)
+    protected ClusterInfo buildClusterInfo()
     {
-        return getOrCreatePreliminaryGroup(conf).getLowestCassandraVersion();
-    }
-
-    @Override
-    protected Set<String> getSSTableVersionsOnCluster(@NotNull BulkSparkConf conf)
-    {
-        return getOrCreatePreliminaryGroup(conf).getSSTableVersionsOnCluster();
-    }
-
-    @Override
-    protected ClusterInfo buildClusterInfo(CassandraVersion bridgeVersion)
-    {
-        CassandraClusterInfoGroup group = getOrCreatePreliminaryGroup(bulkSparkConf());
-        preliminaryGroup = null;
-        group.setBridgeVersion(bridgeVersion);
-        group.startupValidate();
-        return group;
-    }
-
-    private CassandraClusterInfoGroup getOrCreatePreliminaryGroup(BulkSparkConf conf)
-    {
-        if (preliminaryGroup == null)
-        {
-            preliminaryGroup = CassandraClusterInfoGroup.fromBulkSparkConf(conf, (CassandraVersion) null);
-        }
-
-        return preliminaryGroup;
+        CassandraClusterInfoGroup clusterInfoGroup = CassandraClusterInfoGroup.fromBulkSparkConf(bulkSparkConf());
+        clusterInfoGroup.startupValidate();
+        return clusterInfoGroup;
     }
 
     @Override
@@ -167,6 +134,6 @@ public class CassandraCoordinatedBulkWriterContext extends AbstractBulkWriterCon
                                     broadcastableJobInfo,
                                     broadcastableClusterInfo,
                                     broadcastableSchemaInfo,
-                                    bridgeVersion());
+                                    lowestCassandraVersion());
     }
 }

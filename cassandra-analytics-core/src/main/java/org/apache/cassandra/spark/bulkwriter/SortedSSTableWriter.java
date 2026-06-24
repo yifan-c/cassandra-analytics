@@ -37,7 +37,9 @@ import com.google.common.collect.Range;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.apache.cassandra.bridge.CassandraBridgeFactory;
 import org.apache.cassandra.bridge.CassandraVersion;
+import org.apache.cassandra.bridge.CassandraVersionFeatures;
 import org.apache.cassandra.bridge.SSTableDescriptor;
 import org.apache.cassandra.spark.common.Digest;
 import org.apache.cassandra.spark.common.SSTables;
@@ -118,17 +120,26 @@ public class SortedSSTableWriter
         this.digestAlgorithm = digestAlgorithm;
         this.partitionId = partitionId;
 
+        String lowestCassandraVersion = writerContext.cluster().getLowestCassandraVersion();
+        String packageVersion = getPackageVersion(lowestCassandraVersion);
+        LOGGER.info("Running with version {}", packageVersion);
+
         SchemaInfo schema = writerContext.schema();
         TableSchema tableSchema = schema.getTableSchema();
+        this.cqlSSTableWriter = SSTableWriterFactory.getSSTableWriter(
+        CassandraVersionFeatures.cassandraVersionFeaturesFromCassandraVersion(packageVersion),
+        this.outDir.toString(),
+        writerContext.cluster().getPartitioner().toString(),
+        tableSchema.createStatement,
+        tableSchema.modificationStatement,
+        schema.getUserDefinedTypeStatements(),
+        writerContext.job().sstableDataSizeInMiB());
+    }
 
-        // Use the bridge from context which is already loaded based on SSTable version analysis
-        this.cqlSSTableWriter = writerContext.bridge().getSSTableWriter(
-            this.outDir.toString(),
-            writerContext.cluster().getPartitioner().toString(),
-            tableSchema.createStatement,
-            tableSchema.modificationStatement,
-            schema.getUserDefinedTypeStatements(),
-            writerContext.job().sstableDataSizeInMiB());
+    @NotNull
+    public String getPackageVersion(String lowestCassandraVersion)
+    {
+        return CASSANDRA_VERSION_PREFIX + lowestCassandraVersion;
     }
 
     /**
@@ -352,7 +363,7 @@ public class SortedSSTableWriter
 
     private LocalDataLayer buildLocalDataLayer(@NotNull BulkWriterContext writerContext, @NotNull Path outputDirectory, @Nullable Set<Path> dataFilePaths)
     {
-        CassandraVersion version = writerContext.bridgeVersion();
+        CassandraVersion version = CassandraBridgeFactory.getCassandraVersion(writerContext.cluster().getLowestCassandraVersion());
         String keyspace = writerContext.job().qualifiedTableName().keyspace();
         String schema = writerContext.schema().getTableSchema().createStatement;
         Partitioner partitioner = writerContext.cluster().getPartitioner();

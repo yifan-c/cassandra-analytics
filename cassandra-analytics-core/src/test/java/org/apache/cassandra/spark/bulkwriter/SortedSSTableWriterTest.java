@@ -131,7 +131,7 @@ public class SortedSSTableWriterTest
                 break;
             case 50:
                 // Format is "oa-<generation>-big" or "da-<generation>-bti"
-                if ("big".equals(CassandraVersion.configuredSSTableFormat()))
+                if ("big".equals(CassandraVersion.sstableFormat()))
                 {
                     assertThat(baseFileName).matches("oa-\\d+-big");
                 }

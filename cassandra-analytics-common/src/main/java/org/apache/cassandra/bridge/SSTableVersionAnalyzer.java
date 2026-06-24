@@ -20,228 +20,66 @@
 package org.apache.cassandra.bridge;
 
 import java.util.Comparator;
-import java.util.Optional;
 import java.util.Set;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
- * Analyzes SSTable versions on a cluster to determine the appropriate
- * Cassandra bridge to load for bulk write/read operations.
+ * Determines the Cassandra bridge version to load from the SSTable versions found on a cluster.
  *
- * <p>This class provides logic to select Cassandra bridge based on the highest SSTable
- * version detected on the cluster and the user's requested format preference.</p>
+ * <p>The bridge is selected from the highest SSTable version detected on the cluster. Callers are
+ * responsible for deciding whether SSTable-version-based selection is enabled and for supplying a
+ * fallback otherwise.</p>
  */
 public final class SSTableVersionAnalyzer
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(SSTableVersionAnalyzer.class);
-    static final String DISABLE_SSTABLE_VERSION_BASED_BRIDGE =
-        "spark.cassandra_analytics.bridge.disable_sstable_version_based";
-
     private SSTableVersionAnalyzer()
     {
-        // Utility class
     }
 
     /**
-     * Determines which CassandraVersion bridge to load based on:
-     * - Highest SSTable version detected on cluster
-     * - User's format preference
+     * Determines the bridge version for a write operation and verifies it can produce the requested format.
      *
-     * @param sstableVersionsOnCluster Set of SSTable versions found on cluster nodes
-     * @param requestedFormat User's requested format, example: "big" or "bti"
-     * @param cassandraVersion Cassandra version string for fallback
-     * @param isSSTableVersionBasedBridgeDisabled flag to disable sstable version based bridge determination
-     * @return CassandraVersion enum indicating which bridge to load
-     * @throws UnsupportedOperationException if cluster doesn't support requested format
-     * @throws IllegalStateException if SSTable versions are empty/unknown
+     * @param sstableVersionsOnCluster SSTable versions found on cluster nodes
+     * @param requestedFormat          requested SSTable format, e.g. "big" or "bti"
+     * @return the highest {@link CassandraVersion} found on the cluster
+     * @throws IllegalStateException         if the versions are empty or unrecognized
+     * @throws UnsupportedOperationException if the determined version cannot write the requested format
      */
-    public static CassandraVersion determineBridgeVersionForWrite(Set<String> sstableVersionsOnCluster,
-                                                                  String requestedFormat,
-                                                                  String cassandraVersion,
-                                                                  boolean isSSTableVersionBasedBridgeDisabled)
+    public static CassandraVersion determineBridgeVersionForWrite(Set<String> sstableVersionsOnCluster, String requestedFormat)
     {
-        // Check for fallback mode
-        Optional<CassandraVersion> fallback = resolveFallbackVersion(cassandraVersion, isSSTableVersionBasedBridgeDisabled);
-        if (fallback.isPresent())
-        {
-            return fallback.get();
-        }
-
-        // Validate SSTable versions are present
-        ensureSSTableVersionsNotEmpty(sstableVersionsOnCluster);
-
-        // Find highest Cassandra version based on SSTable versions
-        CassandraVersion highestCassandraVersion = findHighestCassandraVersion(sstableVersionsOnCluster);
-
-        // Check if highestCassandraVersion supports the requested format
-        boolean supportsRequestedFormat = highestCassandraVersion.getNativeSStableVersions()
-            .stream()
-            .anyMatch(v -> v.startsWith(requestedFormat + "-"));
-
-        if (supportsRequestedFormat)
-        {
-            return highestCassandraVersion;
-        }
-        else
+        CassandraVersion bridgeVersion = determineBridgeVersionForRead(sstableVersionsOnCluster);
+        if (!bridgeVersion.sstableFormats().contains(requestedFormat))
         {
             throw new UnsupportedOperationException(String.format(
-                          "Cluster does not support requested SSTable format '%s'. " +
-                          "Bridge version determined is %s, which only supports formats: %s",
-                          requestedFormat, highestCassandraVersion.versionName(),
-                          highestCassandraVersion.sstableFormats()));
+                "Cluster does not support requested SSTable format '%s'. Bridge version determined is %s, "
+                + "which only supports formats: %s",
+                requestedFormat, bridgeVersion.versionName(), bridgeVersion.sstableFormats()));
         }
-    }
-
-    /**
-     * Determines which CassandraVersion bridge to load for read operations based on:
-     * - Highest SSTable version detected on cluster
-     *
-     * @param sstableVersionsOnCluster Set of SSTable versions found on cluster nodes
-     * @param cassandraVersion Cassandra version string for fallback
-     * @param isSSTableVersionBasedBridgeDisabled flag to disable sstable version based bridge determination
-     * @return CassandraVersion enum indicating which bridge to load
-     * @throws IllegalStateException if SSTable versions are empty/unknown
-     */
-    public static CassandraVersion determineBridgeVersionForRead(Set<String> sstableVersionsOnCluster,
-                                                                 String cassandraVersion,
-                                                                 boolean isSSTableVersionBasedBridgeDisabled)
-    {
-        // Check for fallback mode
-        Optional<CassandraVersion> fallback = resolveFallbackVersion(cassandraVersion, isSSTableVersionBasedBridgeDisabled);
-        if (fallback.isPresent())
-        {
-            return fallback.get();
-        }
-
-        // Validate SSTable versions are present
-        ensureSSTableVersionsNotEmpty(sstableVersionsOnCluster);
-
-        // Find highest Cassandra version based on SSTable versions
-        CassandraVersion bridgeVersion = findHighestCassandraVersion(sstableVersionsOnCluster);
-
-        LOGGER.debug("Determined bridge version {} for read based on SSTable versions on cluster: {}",
-                     bridgeVersion.versionName(), sstableVersionsOnCluster);
-
         return bridgeVersion;
     }
 
-    private static Optional<CassandraVersion> resolveFallbackVersion(String cassandraVersion,
-                                                                      boolean isSSTableVersionBasedBridgeDisabled)
-    {
-        if (!isSSTableVersionBasedBridgeDisabled)
-        {
-            return Optional.empty();
-        }
-
-        LOGGER.info("SSTable version-based bridge selection is disabled via configuration. " +
-                    "Using cassandra.version for bridge selection: {}", cassandraVersion);
-        return Optional.of(CassandraVersion.fromVersion(cassandraVersion)
-                                           .orElseThrow(() -> new UnsupportedOperationException(
-                                           String.format("Unsupported Cassandra version: %s", cassandraVersion))));
-    }
-
     /**
-     * Ensures that SSTable versions from cluster are not null or empty.
+     * Determines the bridge version for a read operation from the highest SSTable version on the cluster.
      *
-     * @param sstableVersionsOnCluster Set of SSTable versions to validate
-     * @throws IllegalStateException if versions are null or empty
+     * @param sstableVersionsOnCluster SSTable versions found on cluster nodes
+     * @return the highest {@link CassandraVersion} found on the cluster
+     * @throws IllegalStateException if the versions are empty or unrecognized
      */
-    private static void ensureSSTableVersionsNotEmpty(Set<String> sstableVersionsOnCluster)
+    public static CassandraVersion determineBridgeVersionForRead(Set<String> sstableVersionsOnCluster)
     {
         if (sstableVersionsOnCluster == null || sstableVersionsOnCluster.isEmpty())
         {
-            throw new IllegalStateException(String.format(
-                "Unable to retrieve SSTable versions from cluster. " +
-                "This is required for SSTable version-based bridge selection. " +
-                "If you want to bypass this check and use cassandra.version for bridge selection, " +
-                "set %s=true", DISABLE_SSTABLE_VERSION_BASED_BRIDGE));
+            throw new IllegalStateException("Unable to determine bridge version: no SSTable versions found on cluster");
         }
+
+        return sstableVersionsOnCluster.stream()
+                                       .map(SSTableVersionAnalyzer::toCassandraVersion)
+                                       .max(Comparator.comparingInt(CassandraVersion::versionNumber))
+                                       .orElseThrow(() -> new IllegalStateException("Unable to find highest SSTable version"));
     }
 
-    /**
-     * Finds the highest Cassandra version based on SSTable versions found on cluster.
-     *
-     * @param sstableVersionsOnCluster Set of SSTable versions found on cluster
-     * @return CassandraVersion corresponding to the highest SSTable version
-     * @throws IllegalStateException if highest version is unknown
-     */
-    private static CassandraVersion findHighestCassandraVersion(Set<String> sstableVersionsOnCluster)
+    private static CassandraVersion toCassandraVersion(String sstableVersion)
     {
-        String highestSSTableVersion = findHighestSSTableVersion(sstableVersionsOnCluster);
-        return CassandraVersion.fromSSTableVersion(highestSSTableVersion)
-                               .orElseThrow(() -> new IllegalStateException(
-                               String.format("Unknown SSTable version: %s. Cannot determine bridge version. " +
-                                             "SSTable versions on cluster: %s. " +
-                                             "To retry the job using a fallback Cassandra version, " +
-                                             "set %s=true",
-                                             highestSSTableVersion, sstableVersionsOnCluster,
-                                             DISABLE_SSTABLE_VERSION_BASED_BRIDGE)));
-    }
-
-    /**
-     * Finds the highest SSTable version from the set using CassandraVersion mappings.
-     * Ordering is based on CassandraVersion number (e.g., 5.0 > 4.0 > 3.0).
-     * Versions within the same CassandraVersion are considered equal.
-     *
-     * @param versions Set of SSTable version strings
-     * @return Highest SSTable version string
-     * @throws IllegalStateException if versions is empty, contains null values, or contains unknown versions
-     */
-    public static String findHighestSSTableVersion(Set<String> versions)
-    {
-        if (versions == null || versions.isEmpty())
-        {
-            throw new IllegalStateException("SSTable versions set cannot be empty");
-        }
-
-        // The Comparator below is never invoked for a single-element set, so an unknown version
-        // would otherwise slip through. Validate the sole element here; multi-element sets are
-        // fully validated by the Comparator (every element participates in at least one comparison).
-        if (versions.size() == 1)
-        {
-            String only = versions.iterator().next();
-            if (!CassandraVersion.fromSSTableVersion(only).isPresent())
-            {
-                throw new IllegalStateException(
-                    String.format("Unknown SSTable version: %s. Cannot determine Cassandra version. " +
-                                  "To retry the job using a fallback Cassandra version, " +
-                                  "set %s=true", only, DISABLE_SSTABLE_VERSION_BASED_BRIDGE));
-            }
-        }
-
-        Comparator<String> sstableVersionComparator = (v1, v2) -> {
-            // Find which CassandraVersion each SSTable version belongs to
-            Optional<CassandraVersion> v1Opt = CassandraVersion.fromSSTableVersion(v1);
-            Optional<CassandraVersion> v2Opt = CassandraVersion.fromSSTableVersion(v2);
-
-            if (!v1Opt.isPresent() || !v2Opt.isPresent())
-            {
-                String unknownVersion = !v1Opt.isPresent() ? v1 : v2;
-                throw new IllegalStateException(
-                    String.format("Unknown SSTable version: %s. Cannot determine Cassandra version. " +
-                                  "To retry the job using a fallback Cassandra version, " +
-                                  "set %s=true", unknownVersion, DISABLE_SSTABLE_VERSION_BASED_BRIDGE));
-            }
-
-            CassandraVersion cv1 = v1Opt.get();
-            CassandraVersion cv2 = v2Opt.get();
-
-            // First, compare by CassandraVersion number
-            // FIVEZERO (50) > FOURONE (41) > FOURZERO (40) > THREEZERO (30)
-            int versionComparison = Integer.compare(cv1.versionNumber(), cv2.versionNumber());
-            if (versionComparison != 0)
-            {
-                return versionComparison;
-            }
-
-            // Same CassandraVersion - versions are considered equal
-            return 0;
-        };
-
-        return versions.stream()
-            .max(sstableVersionComparator)
-            .orElseThrow(() -> new IllegalStateException("Unable to find highest SSTable version"));
+        return CassandraVersion.fromSSTableVersion(sstableVersion)
+                               .orElseThrow(() -> new IllegalStateException("Unknown SSTable version: " + sstableVersion));
     }
 }
